@@ -71,13 +71,16 @@ function scoreFiles({ store, temporalStore = null, projectRoot, files = null }) 
     `).all();
     for (const r of rows) ivCounts.set(r.file, r.c);
   } catch {}
-  const maxIv = Math.max(1, ...ivCounts.values());
+  let maxIv = 1;
+  for (const c of ivCounts.values()) {
+    if (c > maxIv) maxIv = c;
+  }
 
   // Tests-present set, via the files-without-tests detector.
   const { filesWithoutTests } = require('../mcp/files-without-tests');
   let withoutTests = new Set();
   try {
-    const allFiles = files || store.db.prepare('SELECT path FROM files LIMIT 2000').all().map(r => r.path);
+    const allFiles = files || store.db.prepare('SELECT path FROM files').all().map(r => r.path);
     const r = filesWithoutTests(projectRoot, allFiles);
     withoutTests = new Set(r.files || []);
   } catch {}
