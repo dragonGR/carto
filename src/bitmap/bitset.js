@@ -37,7 +37,7 @@ class Bitset {
   /** Bitwise OR. Returns a new Bitset sized to the larger of the two. */
   or(other) {
     const r = new Bitset(Math.max(this.size, other.size));
-    for (let i = 0; i < this.words.length; i++) r.words[i] = this.words[i];
+    r.words.set(this.words);
     for (let i = 0; i < other.words.length; i++) r.words[i] |= other.words[i];
     return r;
   }
@@ -53,8 +53,12 @@ class Bitset {
   /** Bitwise AND-NOT (this & ~other). Returns a new Bitset sized to `this`. */
   andNot(other) {
     const r = new Bitset(this.size);
-    for (let i = 0; i < this.words.length; i++) {
-      r.words[i] = this.words[i] & ~(other.words[i] || 0);
+    const minLen = Math.min(this.words.length, other.words.length);
+    for (let i = 0; i < minLen; i++) {
+      r.words[i] = this.words[i] & ~other.words[i];
+    }
+    for (let i = minLen; i < this.words.length; i++) {
+      r.words[i] = this.words[i];
     }
     return r;
   }
@@ -182,7 +186,7 @@ class Bitset {
       throw new Error(`Bitset.deserialize: buffer too small (got ${buf.length}, need ${expected})`);
     }
     const u8 = new Uint8Array(r.words.buffer, r.words.byteOffset, expected);
-    for (let i = 0; i < expected; i++) u8[i] = buf[i];
+    u8.set(buf.subarray(0, expected));
     return r;
   }
 }

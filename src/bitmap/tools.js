@@ -74,7 +74,7 @@ function blastRadius(sidecar, file, maxHops = 5) {
         const bit = v & -v;
         const id = (w << 5) + (31 - Math.clz32(bit));
         v ^= bit;
-        if (!hopOf.has(id)) hopOf.set(id, hop);
+        hopOf.set(id, hop);
       }
     }
     visited.orInPlace(next);
@@ -202,12 +202,24 @@ function similarPatterns(sidecar, file, k = 5) {
   const target = sidecar.forward.get(fileId);
   if (!target || target.popcount() === 0) return [];
 
+  const targetCount = target.popcount();
+  const twords = target.words;
   const scores = [];
   for (const [otherId, bitmap] of sidecar.forward) {
     if (otherId === fileId) continue;
-    const intersection = target.and(bitmap).popcount();
+    const bwords = bitmap.words;
+    const minWords = Math.min(twords.length, bwords.length);
+    let intersection = 0;
+    for (let w = 0; w < minWords; w++) {
+      let v = twords[w] & bwords[w];
+      if (v) {
+        v = v - ((v >>> 1) & 0x55555555);
+        v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+        intersection += (((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24;
+      }
+    }
     if (intersection === 0) continue;
-    const union = target.or(bitmap).popcount();
+    const union = targetCount + bitmap.popcount() - intersection;
     const p = sidecar.fileIdToPath.get(otherId);
     if (!p) continue;
     scores.push({ file: p, score: intersection / union, shared: intersection });
@@ -280,7 +292,7 @@ function simulateChangeImpact(sidecar, files, maxHops = 5) {
         const bit = v & -v;
         const id = (w << 5) + (31 - Math.clz32(bit));
         v ^= bit;
-        if (!hopOf.has(id)) hopOf.set(id, hop);
+        hopOf.set(id, hop);
       }
     }
     visited.orInPlace(next);
