@@ -31,6 +31,20 @@
  * Malformed input must never throw — return whatever we parsed.
  */
 
+const DIFF_GIT_RE = /^diff --git a\/(.+?) b\/(.+)$/;
+const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+const IMPORT_PATTERNS = [
+  /^import\s+(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/,
+  /require\(\s*['"]([^'"]+)['"]\s*\)/,
+  /^import\(\s*['"]([^'"]+)['"]\s*\)/,
+  /^from\s+([\w.]+)\s+import\b/,
+  /^import\s+([\w.]+)\s*$/,
+  /^import\s+['"]([^'"]+)['"]/,
+  /^use\s+([\w:]+)/,
+  /^import\s+([\w.]+);/,
+];
+
 function stripDiffPath(raw) {
   if (!raw || typeof raw !== 'string') return null;
   // Strip trailing tab/timestamp markers that some unified diffs append.
@@ -92,7 +106,7 @@ function parseDiff(diffText) {
       pendingKind = 'modify';
       pendingOldPath = null;
       pendingNewPath = null;
-      const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      const m = line.match(DIFF_GIT_RE);
       if (m) {
         pendingOldPath = m[1];
         pendingNewPath = m[2];
@@ -154,7 +168,7 @@ function parseDiff(diffText) {
 
     // Hunk header: @@ -oldStart,oldLen +newStart,newLen @@ (lengths optional)
     if (line.startsWith('@@')) {
-      const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      const m = line.match(HUNK_HEADER_RE);
       if (m) {
         oldLine = parseInt(m[1], 10);
         newLine = parseInt(m[2], 10);
@@ -216,29 +230,10 @@ function extractAddedImports(file) {
     if (!content) continue;
     const trimmed = content.trim();
     if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#')) continue;
-    // ES module: import X from 'mod' / import 'mod' / import { x } from "mod"
-    let m = trimmed.match(/^import\s+(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/);
-    if (m) { out.push(m[1]); continue; }
-    // CommonJS: const x = require('mod')
-    m = trimmed.match(/require\(\s*['"]([^'"]+)['"]\s*\)/);
-    if (m) { out.push(m[1]); continue; }
-    // Dynamic import: import('mod')
-    m = trimmed.match(/^import\(\s*['"]([^'"]+)['"]\s*\)/);
-    if (m) { out.push(m[1]); continue; }
-    // Python: from mod import x  /  import mod
-    m = trimmed.match(/^from\s+([\w.]+)\s+import\b/);
-    if (m) { out.push(m[1]); continue; }
-    m = trimmed.match(/^import\s+([\w.]+)\s*$/);
-    if (m) { out.push(m[1]); continue; }
-    // Go: import "mod"  /  multi-line import block
-    m = trimmed.match(/^import\s+['"]([^'"]+)['"]/);
-    if (m) { out.push(m[1]); continue; }
-    // Rust: use crate::a::b::c;
-    m = trimmed.match(/^use\s+([\w:]+)/);
-    if (m) { out.push(m[1]); continue; }
-    // Java: import a.b.C;
-    m = trimmed.match(/^import\s+([\w.]+);/);
-    if (m) { out.push(m[1]); continue; }
+    for (const pat of IMPORT_PATTERNS) {
+      const m = trimmed.match(pat);
+      if (m) { out.push(m[1]); break; }
+    }
   }
   return out;
 }
