@@ -88,7 +88,8 @@ function discoverFiles(projectRoot, opts) {
       if (entry.name.startsWith('.') && entry.name !== '.env') continue;
       if (IGNORE_DIRS.has(entry.name)) continue;
       const full = path.join(dir, entry.name);
-      const rel = path.relative(projectRoot, full);
+      let rel = path.relative(projectRoot, full);
+      if (path.sep !== '/') rel = rel.replace(/\\/g, '/');
       if (entry.isDirectory()) {
         walk(full);
       } else if (entry.isFile()) {
@@ -118,12 +119,7 @@ function discoverFiles(projectRoot, opts) {
   // default is locale-INDEPENDENT) on the forward-slash form, so the
   // order is identical across OSes and locales — never localeCompare,
   // which is locale-dependent and would reintroduce nondeterminism.
-  const toPosix = (p) => p.replace(/\\/g, '/');
-  results.sort((a, b) => {
-    const na = toPosix(a);
-    const nb = toPosix(b);
-    return na < nb ? -1 : na > nb ? 1 : 0;
-  });
+  results.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return results;
 }
 
