@@ -77,6 +77,13 @@ const DEFAULT_IGNORE_PATTERNS = [
  * Reads .cartoignore from the project root (if it exists) and merges with defaults.
  * Returns a function that checks if a file path matches any ignore pattern.
  */
+function patternToRegex(pattern) {
+  const regexStr = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
+  return new RegExp(`^${regexStr}$`, 'i');
+}
+
 function parseCartoIgnore(projectRoot) {
   let userPatterns = [];
 
@@ -91,14 +98,13 @@ function parseCartoIgnore(projectRoot) {
     // No .cartoignore file — that's fine, use defaults only
   }
 
-  const allPatterns = [...DEFAULT_IGNORE_PATTERNS, ...userPatterns];
+  const compiled = [...DEFAULT_IGNORE_PATTERNS, ...userPatterns].map(patternToRegex);
 
   return function isIgnored(filePath) {
     const basename = path.basename(filePath);
-    const relativePath = filePath; // can be absolute or relative
-
-    for (const pattern of allPatterns) {
-      if (matchPattern(basename, pattern) || matchPattern(relativePath, pattern)) {
+    for (let i = 0; i < compiled.length; i++) {
+      const rx = compiled[i];
+      if (rx.test(basename) || rx.test(filePath)) {
         return true;
       }
     }
@@ -110,12 +116,7 @@ function parseCartoIgnore(projectRoot) {
  * Simple glob matching supporting * as wildcard.
  */
 function matchPattern(str, pattern) {
-  // Escape regex special chars except *
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
-  const regex = new RegExp(`^${regexStr}$`, 'i');
-  return regex.test(str);
+  return patternToRegex(pattern).test(str);
 }
 
 module.exports = { parseCartoIgnore, DEFAULT_IGNORE_PATTERNS };
