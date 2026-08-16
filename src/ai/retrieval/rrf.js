@@ -45,10 +45,11 @@ function fuse(channels, { boosts = null, limit = 30 } = {}) {
       const item = list[i];
       if (!item || !item.path) continue;
       const rrf = 1 / (K + (i + 1));
-      if (!acc.has(item.path)) {
-        acc.set(item.path, { path: item.path, score: 0, components: {} });
+      let row = acc.get(item.path);
+      if (!row) {
+        row = { path: item.path, score: 0, components: {} };
+        acc.set(item.path, row);
       }
-      const row = acc.get(item.path);
       row.score += rrf;
       row.components[channelName] = rrf;
     }
@@ -57,8 +58,8 @@ function fuse(channels, { boosts = null, limit = 30 } = {}) {
   // Apply additive boosts.
   if (boosts && typeof boosts.forEach === 'function') {
     boosts.forEach((boost, path) => {
-      if (acc.has(path)) {
-        const row = acc.get(path);
+      const row = acc.get(path);
+      if (row) {
         row.score += boost;
         row.components.boost = boost;
       }
