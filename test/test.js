@@ -9423,6 +9423,85 @@ test('Incremental Tree-sitter', 'LRU tree cache adheres to max size limit', () =
   assert.ok(origMax >= 100, 'cache limit must be at least 100 entries');
 });
 
+// ── Test-to-code mapping ──────────────────────────────────────────
+test('Test-to-code mapping', 'findTestsForFiles finds direct sibling and mirror test files', () => {
+  const { findTestsForFiles, detectTestRunner } = require('../src/mcp/test-mapper');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-testmap-'));
+  fs.mkdirSync(path.join(tmpDir, 'src', 'auth'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'test', 'auth'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'pkg', 'calc'), { recursive: true });
+
+  fs.writeFileSync(path.join(tmpDir, 'src', 'auth', 'jwt.ts'), 'export const jwt = 1;');
+  fs.writeFileSync(path.join(tmpDir, 'src', 'auth', 'jwt.test.ts'), 'test("jwt", () => {});');
+  fs.writeFileSync(path.join(tmpDir, 'src', 'auth', 'oauth.ts'), 'export const oauth = 1;');
+  fs.writeFileSync(path.join(tmpDir, 'test', 'auth', 'oauth.test.js'), 'test("oauth", () => {});');
+  fs.writeFileSync(path.join(tmpDir, 'pkg', 'calc', 'calc.go'), 'package calc');
+  fs.writeFileSync(path.join(tmpDir, 'pkg', 'calc', 'calc_test.go'), 'package calc');
+
+  const mapping = findTestsForFiles(tmpDir, [
+    'src/auth/jwt.ts',
+    'src/auth/oauth.ts',
+    'pkg/calc/calc.go',
+    'src/auth/missing.ts'
+  ]);
+
+  assert.strictEqual(mapping.length, 3);
+  const jwtMap = mapping.find(m => m.file === 'src/auth/jwt.ts');
+  assert.ok(jwtMap);
+  assert.strictEqual(jwtMap.testFile, 'src/auth/jwt.test.ts');
+
+  const oauthMap = mapping.find(m => m.file === 'src/auth/oauth.ts');
+  assert.ok(oauthMap);
+  assert.strictEqual(oauthMap.testFile, 'test/auth/oauth.test.js');
+
+  const goMap = mapping.find(m => m.file === 'pkg/calc/calc.go');
+  assert.ok(goMap);
+  assert.strictEqual(goMap.testFile, 'pkg/calc/calc_test.go');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Test-to-code mapping', 'detectTestRunner generates runnable CLI commands', () => {
+  const { detectTestRunner, getTestsForChange } = require('../src/mcp/test-mapper');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-testcmd-'));
+  fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+    name: 'sample',
+    scripts: { test: 'jest' }
+  }));
+  fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'src', 'calc.js'), 'module.exports = {}');
+  fs.writeFileSync(path.join(tmpDir, 'src', 'calc.test.js'), 'test()');
+
+  const runner = detectTestRunner(tmpDir);
+  assert.strictEqual(runner.runner, 'jest');
+  assert.ok(runner.commandTemplate.includes('jest'));
+
+  const result = getTestsForChange(tmpDir, ['src/calc.js']);
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].file, 'src/calc.js');
+  assert.strictEqual(result[0].testFile, 'src/calc.test.js');
+  assert.ok(result[0].command.includes('src/calc.test.js'));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Test-to-code mapping', 'change-plan integrates recommended_tests', () => {
+  const { planChange } = require('../src/mcp/change-plan');
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-plantest-'));
+  fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'src', 'user.ts'), 'export function getUser() {}');
+  fs.writeFileSync(path.join(tmpDir, 'src', 'user.test.ts'), 'test()');
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (1, 'src/user.ts', 'typescript')");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind) VALUES (1, 'getUser', 'function')");
+
+  const plan = planChange(store, 'update getUser function');
+  assert.ok(Array.isArray(plan.recommended_tests), 'plan must contain recommended_tests array');
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 // ═══════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════
@@ -9431,7 +9510,7 @@ test('Incremental Tree-sitter', 'LRU tree cache adheres to max size limit', () =
   await runAsyncSuite();
 
   console.log('');
-  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter'];
+  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping'];
   for (const suite of suiteNames) {
     const s = suiteTotals[suite] || { pass: 0, total: 0 };
     const icon = s.pass === s.total ? '✓' : '✗';

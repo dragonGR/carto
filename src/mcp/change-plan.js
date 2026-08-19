@@ -27,6 +27,7 @@
  * plus new optional sections `## Files to Review (Callers)` and
  * `## Cross-Domain Edges` when non-empty.
  */
+const { getTestsForChange } = require('./test-mapper');
 
 // ─── Tokenization ─────────────────────────────────────────────────────
 
@@ -700,6 +701,7 @@ function planChange(store, intentRaw) {
       affectedDomains: [],
       crossDomainEdges: [],
       conventions: [],
+      recommended_tests: [],
       guidance: 'Index is empty. Run `carto sync` first.'
     };
   }
@@ -715,6 +717,7 @@ function planChange(store, intentRaw) {
       affectedDomains: [],
       crossDomainEdges: [],
       conventions: [],
+      recommended_tests: [],
       guidance: 'No searchable tokens in intent. Try a more specific phrase, or use `get_routes` / `get_domains_list` / `get_high_impact_files` to browse.'
     };
   }
@@ -733,6 +736,7 @@ function planChange(store, intentRaw) {
       affectedDomains: [],
       crossDomainEdges: [],
       conventions: [],
+      recommended_tests: [],
       guidance: 'No anchor matched. Try `get_routes` to browse routes, `get_domains_list` to explore domains, or `get_high_impact_files` to see central files.'
     };
   }
@@ -799,6 +803,10 @@ function planChange(store, intentRaw) {
     ])
   ].sort();
 
+  const projectRoot = (store && store._projectRoot) || process.cwd();
+  const testCandidateFiles = [...new Set([...filesToTouch, ...expansion.blastRadius.map(b => b.file)])];
+  const recommended_tests = getTestsForChange(projectRoot, testCandidateFiles);
+
   return {
     intent,
     tokens,
@@ -809,6 +817,7 @@ function planChange(store, intentRaw) {
     affectedDomains: expansion.affectedDomains,
     crossDomainEdges,
     conventions,
+    recommended_tests,
     meta: { forwardPruned, crossDomainOmitted },
     guidance: null
   };
@@ -937,6 +946,17 @@ function formatPlanMarkdown(plan) {
     lines.push('_Same-domain peers — use these as conventions:_\n');
     for (const c of plan.conventions) {
       lines.push(`- \`${c.file}\` _(${c.domain}, ${c.imports} imports, ${c.routes} routes)_`);
+    }
+    lines.push('');
+  }
+
+  // ── Recommended Tests ─────────────────────────────────────────────
+  if (plan.recommended_tests && plan.recommended_tests.length > 0) {
+    lines.push('## Recommended Tests\n');
+    lines.push('| Source File | Test File | Command |');
+    lines.push('|-------------|-----------|---------|');
+    for (const t of plan.recommended_tests.slice(0, 10)) {
+      lines.push(`| \`${t.file}\` | \`${t.testFile}\` | \`${t.command}\` |`);
     }
     lines.push('');
   }

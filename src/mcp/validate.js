@@ -39,7 +39,7 @@ const crypto = require('crypto');
 const bitmapTools = require('../bitmap/tools');
 const { parseDiff, extractAddedImports } = require('./diff-parser');
 const { resolveSpecifier } = require('../extractors/imports');
-
+const { getTestsForChange } = require('./test-mapper');
 const SENSITIVE_DOMAINS = new Set(['AUTH', 'PAYMENTS', 'PAYMENT', 'BILLING', 'SECURITY']);
 
 const DEFAULTS = {
@@ -269,6 +269,8 @@ function validateDiff(store, sidecar, diffText, opts = {}) {
   } else {
     result.risk = 'HIGH';
   }
+
+  result.recommended_tests = getTestsForChange(projectRoot, parsedFiles.map(f => f.path));
 
   return result;
 }
