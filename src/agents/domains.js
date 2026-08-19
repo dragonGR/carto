@@ -34,6 +34,16 @@ const VOTE_FRACTION = 0.5;   // winner must be at least this share of all domain
 // Active domain map — replaced by setDomainMap() when carto.config.json is present
 let DOMAIN_MAP = DEFAULT_DOMAIN_MAP;
 
+function parseDomainMap(customDomains) {
+  if (!customDomains || typeof customDomains !== 'object' || Array.isArray(customDomains)) {
+    return DEFAULT_DOMAIN_MAP;
+  }
+  return Object.entries(customDomains).map(([domain, keywords]) => ({
+    domain: domain.toUpperCase(),
+    keywords: (Array.isArray(keywords) ? keywords : [keywords]).map(k => String(k).toLowerCase()),
+  }));
+}
+
 /**
  * setDomainMap(customDomains)
  * Override the domain map from carto.config.json.
@@ -44,24 +54,18 @@ let DOMAIN_MAP = DEFAULT_DOMAIN_MAP;
  * Pass null to reset to defaults.
  */
 function setDomainMap(customDomains) {
-  if (!customDomains || typeof customDomains !== 'object' || Array.isArray(customDomains)) {
-    DOMAIN_MAP = DEFAULT_DOMAIN_MAP;
-    return;
-  }
-  DOMAIN_MAP = Object.entries(customDomains).map(([domain, keywords]) => ({
-    domain: domain.toUpperCase(),
-    keywords: keywords.map(k => String(k).toLowerCase()),
-  }));
+  DOMAIN_MAP = parseDomainMap(customDomains);
 }
 
 /**
- * getDomainForFile(relPath) → domain string or null
+ * getDomainForFile(relPath, customMap?) → domain string or null
  * Returns domain if path matches a keyword, null if no match.
  * Returns null (not 'CORE') so callers know it wasn't matched.
  */
-function getDomainForFile(relPath) {
+function getDomainForFile(relPath, customMap = null) {
   const lower = relPath.toLowerCase();
-  for (const { keywords, domain } of DOMAIN_MAP) {
+  const map = customMap || DOMAIN_MAP;
+  for (const { keywords, domain } of map) {
     for (const kw of keywords) {
       if (
         lower.includes(`/${kw}/`) ||

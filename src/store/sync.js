@@ -377,7 +377,6 @@ async function runSync(config) {
     const importGraph = store.getImportGraph();
     const edgeCount = Object.values(importGraph).reduce((s, d) => s + d.length, 0);
     const fileCount = allFiles.length;
-
     // 10b — Load carto.config.json for custom domain keywords + anchors
     const cartoConfig = loadCartoConfig(projectRoot);
     if (cartoConfig) {
@@ -391,72 +390,66 @@ async function runSync(config) {
 
     const strategy = selectClusteringStrategy(fileCount, edgeCount);
     let fileAssignments; // Map<filePath, domainName>
-    // Per-file confidence (0..1). Declared config → 1.0; keyword seed → 0.9;
-    // graph/vote inference → lower; CORE fallback → low. Persisted to
-    // domain_assignments.confidence.
     const confidenceByFile = new Map();
 
-    if (strategy.method === 'graph') {
-      // Merge default + config keywords for graph naming
-      const keywordSeeds = {
-        AUTH:          ['auth', 'login', 'session', 'oauth', 'jwt', 'password'],
-        PAYMENTS:      ['payment', 'billing', 'stripe', 'invoice', 'subscription'],
-        DATABASE:      ['prisma', 'drizzle', 'migration'],
-        TRPC:          ['trpc', 'procedure'],
-        EVENTS:        ['webhook', 'queue', 'worker', 'cron'],
-        NOTIFICATIONS: ['notification', 'mailer', 'sms'],
-      };
-      if (cartoConfig) {
-        for (const [name, cfg] of Object.entries(cartoConfig.domains)) {
-          if (cfg.keywords && cfg.keywords.length > 0) {
-            keywordSeeds[name] = [...(keywordSeeds[name] || []), ...cfg.keywords];
+    try {
+      if (strategy.method === 'graph') {
+        // Merge default + config keywords for graph naming
+        const keywordSeeds = {
+          AUTH:          ['auth', 'login', 'session', 'oauth', 'jwt', 'password'],
+          PAYMENTS:      ['payment', 'billing', 'stripe', 'invoice', 'subscription'],
+          DATABASE:      ['prisma', 'drizzle', 'migration'],
+          TRPC:          ['trpc', 'procedure'],
+          EVENTS:        ['webhook', 'queue', 'worker', 'cron'],
+          NOTIFICATIONS: ['notification', 'mailer', 'sms'],
+        };
+        if (cartoConfig) {
+          for (const [name, cfg] of Object.entries(cartoConfig.domains)) {
+            if (cfg.keywords && cfg.keywords.length > 0) {
+              keywordSeeds[name] = [...(keywordSeeds[name] || []), ...cfg.keywords];
+            }
           }
         }
-      }
 
-      const rawAssignments = clusterByGraph(importGraph, strategy.gamma, keywordSeeds);
+        const rawAssignments = clusterByGraph(importGraph, strategy.gamma, keywordSeeds);
 
-      // Merge micro-communities (< minSize files) into CORE
-      const domainCounts = new Map();
-      for (const domain of rawAssignments.values()) {
-        domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1);
-      }
-      fileAssignments = new Map();
-      for (const [fp, domain] of rawAssignments) {
-        const kept = (domainCounts.get(domain) || 0) >= strategy.minSize;
-        const finalDomain = kept && domain !== 'CORE' ? domain : 'CORE';
-        fileAssignments.set(fp, finalDomain);
-        confidenceByFile.set(fp, finalDomain === 'CORE' ? 0.2 : 0.7);
-      }
-      // clusterByGraph only covers files that are nodes in the import graph.
-      // Assign every other indexed file to CORE so the source of truth is
-      // complete (no file silently missing a domain) and consistent with the
-      // keyword path.
-      for (const f of store.getAllFiles()) {
-        if (!fileAssignments.has(f.path)) {
-          fileAssignments.set(f.path, 'CORE');
-          confidenceByFile.set(f.path, 0.2);
+        // Merge micro-communities (< minSize files) into CORE
+        const domainCounts = new Map();
+        for (const domain of rawAssignments.values()) {
+          domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1);
         }
+        fileAssignments = new Map();
+        for (const [fp, domain] of rawAssignments) {
+          const kept = (domainCounts.get(domain) || 0) >= strategy.minSize;
+          const finalDomain = kept && domain !== 'CORE' ? domain : 'CORE';
+          fileAssignments.set(fp, finalDomain);
+          confidenceByFile.set(fp, finalDomain === 'CORE' ? 0.2 : 0.7);
+        }
+        for (const f of store.getAllFiles()) {
+          if (!fileAssignments.has(f.path)) {
+            fileAssignments.set(f.path, 'CORE');
+            confidenceByFile.set(f.path, 0.2);
+          }
+        }
+      } else {
+        const kw = runKeywordClustering(store, importGraph);
+        fileAssignments = kw.fileAssignments;
+        for (const [fp, c] of kw.confidenceByFile) confidenceByFile.set(fp, c);
       }
-    } else {
-      const kw = runKeywordClustering(store, importGraph);
-      fileAssignments = kw.fileAssignments;
-      for (const [fp, c] of kw.confidenceByFile) confidenceByFile.set(fp, c);
-    }
 
-    // 10b — Declared config wins. Globs are the PRIMARY, deterministic source;
-    // anchors are exact-file pins that override everything (most specific).
-    if (cartoConfig) {
-      applyDeclaredGlobs(fileAssignments, cartoConfig, confidenceByFile);
-      applyAnchors(fileAssignments, cartoConfig, confidenceByFile);
+      // 10b — Declared config wins. Globs are the PRIMARY, deterministic source;
+      // anchors are exact-file pins that override everything (most specific).
+      if (cartoConfig) {
+        applyDeclaredGlobs(fileAssignments, cartoConfig, confidenceByFile);
+        applyAnchors(fileAssignments, cartoConfig, confidenceByFile);
+      }
+    } finally {
+      // Reset domain map to defaults after use (avoid polluting subsequent runs)
+      if (cartoConfig) setDomainMap(null);
     }
-
-    // Reset domain map to defaults after use (avoid polluting subsequent runs)
-    if (cartoConfig) setDomainMap(null);
 
     // 10c — Domain stability metric: compare to previous snapshot
     computeDomainStability(store, fileAssignments);
-
     // Write domain assignments to SQLite
     store.clearDomainAssignments();
     // Group by domain name
