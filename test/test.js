@@ -9564,6 +9564,93 @@ test('Symbol-Level AST Impact', 'getSymbolsForFile and searchSymbols return symb
   store.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+// ── AST Context Skeletonization ───────────────────────────────────
+test('AST Context Skeletonization', 'skeletonizeSource preserves signatures and types while eliding function bodies', () => {
+  const { skeletonizeSource } = require('../src/ai/skeletonizer');
+  const tsSource = `
+import { db } from './db';
+export interface UserDto {
+  id: string;
+  name: string;
+}
+export class UserService {
+  private secret: string = 'hidden';
+  async getUser(id: string): Promise<UserDto> {
+    const row = await db.query(id);
+    return { id: row.id, name: row.name };
+  }
+}
+export function calculateTax(amount: number, rate: number = 0.1): number {
+  const tax = amount * rate;
+  return tax;
+}
+`;
+  const skeleton = skeletonizeSource(tsSource, '.ts');
+  assert.ok(skeleton.includes('export interface UserDto'), 'must preserve interface');
+  assert.ok(skeleton.includes('calculateTax(amount: number, rate: number = 0.1): number'), 'must preserve function signature and params');
+  assert.ok(skeleton.includes('/* ... */') || skeleton.includes('/* elided */'), 'must replace body with elided placeholder');
+  assert.ok(!skeleton.includes('const tax = amount * rate'), 'must elide inner function body');
+  assert.ok(!skeleton.includes('const row = await db.query'), 'must elide method body');
+});
+
+test('AST Context Skeletonization', 'skeletonizeSource handles Python signatures and class structures', () => {
+  const { skeletonizeSource } = require('../src/ai/skeletonizer');
+  const pySource = `
+import os
+from typing import Optional
+
+class PaymentService:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.connected = True
+
+    def process(self, amount: float) -> bool:
+        if amount <= 0:
+            raise ValueError("invalid")
+        return True
+
+def refund(transaction_id: str) -> None:
+    print("refunding", transaction_id)
+    return None
+`;
+  const skeleton = skeletonizeSource(pySource, '.py');
+  assert.ok(skeleton.includes('class PaymentService:'), 'must preserve class def');
+  assert.ok(skeleton.includes('def process(self, amount: float) -> bool:'), 'must preserve method signature');
+  assert.ok(skeleton.includes('def refund(transaction_id: str) -> None:'), 'must preserve function signature');
+  assert.ok(!skeleton.includes('print("refunding"'), 'must elide function body');
+});
+
+test('AST Context Skeletonization', 'context-builder supports skeleton inclusion mode', () => {
+  const { getMinimalContextForIntent } = require('../src/ai/context-builder');
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-skelctx-'));
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+
+  fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+  const largeCode = 'export function bigFunction() {\n' + '  console.log(1);\n'.repeat(300) + '}\n';
+  fs.writeFileSync(path.join(tmpDir, 'src', 'big.ts'), largeCode);
+
+  store.db.exec("INSERT INTO files (id, path, language, size) VALUES (1, 'src/big.ts', 'typescript', 5000)");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, exported) VALUES (1, 'bigFunction', 'function', 1)");
+
+  // Set a tight budget where full file (~1250 tokens) doesn't fit, but skeleton (~50 tokens) fits
+  const result = getMinimalContextForIntent({
+    store,
+    projectRoot: tmpDir,
+    intent: 'bigFunction',
+    budgetTokens: 300
+  });
+
+  assert.ok(result.files.length > 0);
+  const bigEntry = result.files.find(f => f.path === 'src/big.ts');
+  assert.ok(bigEntry);
+  assert.ok(bigEntry.include === 'skeleton' || bigEntry.include === 'summary');
+
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 // ═══════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════
@@ -9572,7 +9659,7 @@ test('Symbol-Level AST Impact', 'getSymbolsForFile and searchSymbols return symb
   await runAsyncSuite();
 
   console.log('');
-  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping', 'Symbol-Level AST Impact'];
+  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping', 'Symbol-Level AST Impact', 'AST Context Skeletonization'];
   for (const suite of suiteNames) {
     const s = suiteTotals[suite] || { pass: 0, total: 0 };
     const icon = s.pass === s.total ? '✓' : '✗';

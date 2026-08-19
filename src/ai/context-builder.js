@@ -26,7 +26,7 @@ const { searchFts, ensureFtsIndex } = require('./retrieval/lexical');
 const { structuralSearch } = require('./retrieval/structural');
 const { semanticSearch } = require('./retrieval/semantic');
 const { fuse, computeBoosts } = require('./retrieval/rrf');
-
+const { skeletonizeSource } = require('./skeletonizer');
 const DEFAULT_BUDGET = 4000;
 const CHARS_PER_TOKEN = 4;     // conservative estimate for mixed code+prose
 const MAX_FILE_TOKENS = 4096;  // cap any single file's contribution
@@ -85,13 +85,20 @@ function getMinimalContextForIntent({ store, projectRoot, intent, budgetTokens =
       included.push({ path: item.path, tokens: sizeTokens, include: 'full', score: item.score });
       used += sizeTokens;
     } else {
-      // Summary fallback: ~200 tokens estimate
-      const summaryTokens = 200;
-      if (used + summaryTokens <= budgetTokens) {
-        included.push({ path: item.path, tokens: summaryTokens, include: 'summary', score: item.score });
-        used += summaryTokens;
+      // Try skeleton AST mode first (~20-25% of full size)
+      const skeletonTokens = Math.max(25, Math.ceil(sizeTokens * 0.25));
+      if (used + skeletonTokens <= budgetTokens) {
+        included.push({ path: item.path, tokens: skeletonTokens, include: 'skeleton', score: item.score });
+        used += skeletonTokens;
       } else {
-        dropped.push({ path: item.path, tokens: sizeTokens, reason: 'no_budget' });
+        // Summary fallback: ~50 tokens estimate
+        const summaryTokens = 50;
+        if (used + summaryTokens <= budgetTokens) {
+          included.push({ path: item.path, tokens: summaryTokens, include: 'summary', score: item.score });
+          used += summaryTokens;
+        } else {
+          dropped.push({ path: item.path, tokens: sizeTokens, reason: 'no_budget' });
+        }
       }
     }
   }
