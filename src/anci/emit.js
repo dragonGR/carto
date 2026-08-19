@@ -47,7 +47,7 @@ function emitToCartoDir({ cartoDir, sidecar, store, generator, generatedAt }) {
   // 1. Body — derive from sidecar, serialize, atomic write.
   const body = serializeBody(deriveBodyFromSidecar(sidecar));
   const binPath = path.join(cartoDir, ANCI_BIN_FILENAME);
-  const binTmp = binPath + '.tmp';
+  const binTmp = `${binPath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(binTmp, body);
   fs.renameSync(binTmp, binPath);
 
@@ -77,7 +77,7 @@ function emitToCartoDir({ cartoDir, sidecar, store, generator, generatedAt }) {
   });
   const yamlText = yaml.emit(header);
   const yamlPath = path.join(cartoDir, ANCI_YAML_FILENAME);
-  const yamlTmp = yamlPath + '.tmp';
+  const yamlTmp = `${yamlPath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(yamlTmp, yamlText, 'utf-8');
   fs.renameSync(yamlTmp, yamlPath);
 

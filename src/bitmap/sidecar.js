@@ -330,7 +330,7 @@ function decodeBitmap(buf, off, size) {
 function saveToDisk(cartoDir, sidecar) {
   fs.mkdirSync(cartoDir, { recursive: true });
   const target = path.join(cartoDir, BITMAP_FILENAME);
-  const tmp = target + '.tmp';
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
 
   const chunks = [];
 
