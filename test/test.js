@@ -4988,6 +4988,57 @@ test('Bitset serialization', 'In-place ops do not allocate a new words array', (
   assert.strictEqual(a.words, originalWords, 'setAll must not replace .words');
 });
 
+test('Bitset serialization', 'isEmpty and intersects provide zero-allocation boolean queries', () => {
+  const { Bitset } = require('../src/bitmap/bitset');
+  const a = new Bitset(500);
+  assert.strictEqual(a.isEmpty(), true);
+  a.set(100);
+  assert.strictEqual(a.isEmpty(), false);
+  a.clear(100);
+  assert.strictEqual(a.isEmpty(), true);
+
+  const b = new Bitset(500);
+  b.set(200);
+  const c = new Bitset(500);
+  c.set(200);
+  const d = new Bitset(500);
+  d.set(300);
+
+  assert.strictEqual(b.intersects(c), true, 'b and c share bit 200');
+  assert.strictEqual(b.intersects(d), false, 'b and d share no bits');
+  assert.strictEqual(a.intersects(b), false, 'empty bitset shares no bits');
+});
+
+test('Bitset serialization', 'equals checks bitwise equality across sizes and allocations', () => {
+  const { Bitset } = require('../src/bitmap/bitset');
+  const a = new Bitset(100);
+  const b = new Bitset(100);
+  a.set(10); a.set(50);
+  b.set(10); b.set(50);
+  assert.strictEqual(a.equals(b), true);
+  b.set(51);
+  assert.strictEqual(a.equals(b), false);
+});
+
+test('Bitset serialization', 'fromIndices and nextSetBit enable fast sparse traversal', () => {
+  const { Bitset } = require('../src/bitmap/bitset');
+  const indices = [3, 17, 65, 128, 500];
+  const b = Bitset.fromIndices(600, indices);
+  assert.deepStrictEqual(b.iterate(), indices);
+
+  assert.strictEqual(b.firstSetBit(), 3);
+  assert.strictEqual(b.nextSetBit(0), 3);
+  assert.strictEqual(b.nextSetBit(4), 17);
+  assert.strictEqual(b.nextSetBit(65), 65);
+  assert.strictEqual(b.nextSetBit(66), 128);
+  assert.strictEqual(b.nextSetBit(500), 500);
+  assert.strictEqual(b.nextSetBit(501), -1);
+
+  const empty = new Bitset(100);
+  assert.strictEqual(empty.firstSetBit(), -1);
+  assert.strictEqual(empty.nextSetBit(0), -1);
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // Bitmap engine integration — 9 tests
 // ═══════════════════════════════════════════════════════════════════
@@ -9316,6 +9367,62 @@ test('Rule engine: gaps store', 'getGaps ranks HIGH before MEDIUM before LOW', (
   } finally { store.close(); }
 });
 
+// ── Incremental Tree-sitter reuse ─────────────────────────────────
+test('Incremental Tree-sitter', 'extractAll parses incrementally with explicit oldTree', () => {
+  const tsParser = require('../src/extractors/tree-sitter-parser');
+  assert.ok(tsParser.isAvailable());
+  const codeV1 = 'import { a } from "./a";\nfunction first() { return 1; }';
+  const r1 = tsParser.extractAll(codeV1, '.js');
+  assert.deepStrictEqual(r1.imports, ['./a']);
+  assert.strictEqual(r1.symbols.length, 1);
+  assert.strictEqual(r1.symbols[0].name, 'first');
+  assert.ok(r1.tree, 'extractAll must return tree handle for reuse');
+
+  const codeV2 = 'import { a, b } from "./a";\nimport { c } from "./c";\nfunction first() { return 1; }\nfunction second() { return 2; }';
+  const r2 = tsParser.extractAll(codeV2, '.js', { oldTree: r1.tree });
+  assert.deepStrictEqual(r2.imports.sort(), ['./a', './c'].sort());
+  assert.strictEqual(r2.symbols.length, 2);
+  assert.deepStrictEqual(r2.symbols.map(s => s.name).sort(), ['first', 'second'].sort());
+  assert.ok(r2.tree, 'r2 must produce updated tree handle');
+});
+
+test('Incremental Tree-sitter', 'LRU cacheKey auto-caches and reuses trees across edits', () => {
+  const tsParser = require('../src/extractors/tree-sitter-parser');
+  tsParser.clearTreeCache();
+  const cacheKey = 'src/handlers/user.ts';
+  const v1 = 'import { db } from "../db";\nexport function getUser() {}';
+  const r1 = tsParser.extractAll(v1, '.ts', { cacheKey });
+  assert.strictEqual(r1.symbols[0].name, 'getUser');
+
+  const cached = tsParser.getTreeFromCache(cacheKey);
+  assert.ok(cached, 'tree must be cached under cacheKey');
+
+  const v2 = 'import { db } from "../db";\nexport function getUser() {}\nexport function listUsers() {}';
+  const r2 = tsParser.extractAll(v2, '.ts', { cacheKey });
+  assert.strictEqual(r2.symbols.length, 2);
+  assert.deepStrictEqual(r2.symbols.map(s => s.name).sort(), ['getUser', 'listUsers'].sort());
+});
+
+test('Incremental Tree-sitter', 'clearTreeCache empties cache and handles invalid trees gracefully', () => {
+  const tsParser = require('../src/extractors/tree-sitter-parser');
+  tsParser.clearTreeCache();
+  tsParser.extractAll('const x = 1;', '.js', { cacheKey: 'test-file.js' });
+  assert.ok(tsParser.getTreeFromCache('test-file.js'));
+  tsParser.clearTreeCache();
+  assert.strictEqual(tsParser.getTreeFromCache('test-file.js'), null);
+
+  // Incompatible/corrupted oldTree falls back without throwing
+  const fallbackRes = tsParser.extractAll('function safe() {}', '.js', { oldTree: { rootNode: null } });
+  assert.strictEqual(fallbackRes.symbols[0].name, 'safe');
+});
+
+test('Incremental Tree-sitter', 'LRU tree cache adheres to max size limit', () => {
+  const tsParser = require('../src/extractors/tree-sitter-parser');
+  tsParser.clearTreeCache();
+  const origMax = tsParser.TREE_CACHE_MAX_ENTRIES;
+  assert.ok(origMax >= 100, 'cache limit must be at least 100 entries');
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════
@@ -9324,7 +9431,7 @@ test('Rule engine: gaps store', 'getGaps ranks HIGH before MEDIUM before LOW', (
   await runAsyncSuite();
 
   console.log('');
-  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface'];
+  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter'];
   for (const suite of suiteNames) {
     const s = suiteTotals[suite] || { pass: 0, total: 0 };
     const icon = s.pass === s.total ? '✓' : '✗';

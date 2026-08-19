@@ -34,6 +34,82 @@ class Bitset {
   /** Return true if bit `i` is set. */
   has(i) { return (this.words[i >>> 5] & (1 << (i & 31))) !== 0; }
 
+  /** Fast check if bitset has zero bits set (O(words), returns early). */
+  isEmpty() {
+    for (let i = 0; i < this.words.length; i++) {
+      if (this.words[i] !== 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Returns true if `this` and `other` share at least one set bit.
+   * Zero-allocation, short-circuits on first overlapping bit.
+   */
+  intersects(other) {
+    if (!other || !other.words) return false;
+    const n = Math.min(this.words.length, other.words.length);
+    for (let i = 0; i < n; i++) {
+      if ((this.words[i] & other.words[i]) !== 0) return true;
+    }
+    return false;
+  }
+
+  /** Fast bitwise equality comparison across bitsets without serialization. */
+  equals(other) {
+    if (!other || !other.words) return false;
+    const minLen = Math.min(this.words.length, other.words.length);
+    for (let i = 0; i < minLen; i++) {
+      if (this.words[i] !== other.words[i]) return false;
+    }
+    for (let i = minLen; i < this.words.length; i++) {
+      if (this.words[i] !== 0) return false;
+    }
+    for (let i = minLen; i < other.words.length; i++) {
+      if (other.words[i] !== 0) return false;
+    }
+    return true;
+  }
+
+  /** Returns the index of the lowest set bit, or -1 if empty. */
+  firstSetBit() {
+    return this.nextSetBit(0);
+  }
+
+  /**
+   * Returns the lowest set bit index >= fromIndex, or -1 if none.
+   * Skips zero words in O(1) per 32 bits without allocating arrays.
+   */
+  nextSetBit(fromIndex = 0) {
+    if (fromIndex < 0) fromIndex = 0;
+    if (fromIndex >= this.size) return -1;
+    let w = fromIndex >>> 5;
+    if (w >= this.words.length) return -1;
+    const bitOffset = fromIndex & 31;
+    let v = this.words[w] & (~0 << bitOffset);
+    while (w < this.words.length) {
+      if (v !== 0) {
+        const bit = v & (-v);
+        const index = (w << 5) + (31 - Math.clz32(bit));
+        return index < this.size ? index : -1;
+      }
+      w++;
+      if (w < this.words.length) v = this.words[w];
+    }
+    return -1;
+  }
+
+  /** Construct a Bitset of given size populated with given set indices. */
+  static fromIndices(size, indices) {
+    const r = new Bitset(size);
+    if (Array.isArray(indices) || ArrayBuffer.isView(indices)) {
+      for (let i = 0; i < indices.length; i++) {
+        r.set(indices[i]);
+      }
+    }
+    return r;
+  }
+
   /** Bitwise OR. Returns a new Bitset sized to the larger of the two. */
   or(other) {
     const r = new Bitset(Math.max(this.size, other.size));
@@ -127,6 +203,7 @@ class Bitset {
     let c = 0;
     for (let i = 0; i < this.words.length; i++) {
       let v = this.words[i];
+      if (v === 0) continue;
       v = v - ((v >>> 1) & 0x55555555);
       v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
       c += (((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24;
@@ -142,6 +219,7 @@ class Bitset {
     const result = [];
     for (let w = 0; w < this.words.length; w++) {
       let v = this.words[w];
+      if (v === 0) continue;
       while (v) {
         const bit = v & (-v);
         result.push((w << 5) + (31 - Math.clz32(bit)));

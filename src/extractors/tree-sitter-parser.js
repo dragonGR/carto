@@ -180,12 +180,116 @@ const GRAMMAR_DEFS = [
   },
 ];
 
-// ─── Compiled grammar cache ───────────────────────────────────────────────────
+// ─── Compiled grammar & AST tree cache ─────────────────────────────────────────
+
+const TREE_CACHE_MAX_ENTRIES = 500;
+// Map: cacheKey (e.g. relPath) → { tree, text }
+const _treeCache = new Map();
 
 // Map: extension → { parser, importQuery, symbolQuery, name }
 const _grammarCache = new Map();
 // Map: extension → null  (grammar failed to load — skip silently)
 const _failedGrammars = new Set();
+
+function getTreeFromCache(key) {
+  if (!_treeCache.has(key)) return null;
+  const entry = _treeCache.get(key);
+  // Move to tail (LRU most-recently-used)
+  _treeCache.delete(key);
+  _treeCache.set(key, entry);
+  return entry.tree || null;
+}
+
+function setTreeInCache(key, tree, text = '') {
+  if (!key || !tree) return;
+  if (_treeCache.has(key)) _treeCache.delete(key);
+  _treeCache.set(key, { tree, text });
+  if (_treeCache.size > TREE_CACHE_MAX_ENTRIES) {
+    const oldestKey = _treeCache.keys().next().value;
+    if (oldestKey !== undefined) _treeCache.delete(oldestKey);
+  }
+}
+
+function clearTreeCache() {
+  _treeCache.clear();
+}
+
+function _computePos(text, index) {
+  let row = 0;
+  let column = 0;
+  const len = Math.min(index, text.length);
+  for (let i = 0; i < len; i++) {
+    if (text.charCodeAt(i) === 10 /* '\n' */) {
+      row++;
+      column = 0;
+    } else {
+      column++;
+    }
+  }
+  return { row, column };
+}
+
+function _applyTreeEdit(tree, oldText, newText) {
+  if (!tree || typeof tree.edit !== 'function' || oldText === newText) return;
+  let start = 0;
+  const oldLen = oldText.length;
+  const newLen = newText.length;
+
+  while (start < oldLen && start < newLen && oldText.charCodeAt(start) === newText.charCodeAt(start)) {
+    start++;
+  }
+  let oldEnd = oldLen;
+  let newEnd = newLen;
+  while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+    oldEnd--;
+    newEnd--;
+  }
+
+  tree.edit({
+    startIndex: start,
+    oldEndIndex: oldEnd,
+    newEndIndex: newEnd,
+    startPosition: _computePos(oldText, start),
+    oldEndPosition: _computePos(oldText, oldEnd),
+    newEndPosition: _computePos(newText, newEnd)
+  });
+}
+
+function _parseWithTree(parser, content, oldTree, oldText) {
+  if (oldTree) {
+    try {
+      const prevText = typeof oldText === 'string'
+        ? oldText
+        : (oldTree.rootNode && typeof oldTree.rootNode.text === 'string' ? oldTree.rootNode.text : null);
+      if (typeof prevText === 'string') {
+        _applyTreeEdit(oldTree, prevText, content);
+      }
+      return parser.parse(content, oldTree);
+    } catch {
+      // Fall back cleanly if incremental parse encounters invalid AST state
+    }
+  }
+  return parser.parse(content);
+}
+
+function _normalizeOptions(opts) {
+  if (!opts) return { oldTree: null, oldText: null, cacheKey: null };
+  if (typeof opts === 'string') {
+    const entry = _treeCache.get(opts);
+    return {
+      oldTree: entry ? entry.tree : null,
+      oldText: entry ? entry.text : null,
+      cacheKey: opts,
+    };
+  }
+  const cacheKey = opts.cacheKey || null;
+  const entry = cacheKey ? _treeCache.get(cacheKey) : null;
+  return {
+    oldTree: opts.oldTree || (entry ? entry.tree : null),
+    oldText: opts.oldText || (entry ? entry.text : null),
+    cacheKey,
+  };
+}
 
 function _getCompiledGrammar(ext) {
   if (_grammarCache.has(ext)) return _grammarCache.get(ext);
@@ -240,19 +344,22 @@ function supportsExtension(ext) {
 }
 
 /**
- * extractImports(content, ext) → string[]
+ * extractImports(content, ext, opts) → string[]
  *
  * Returns an array of raw import path strings found in the file.
  * Strips surrounding quotes. Returns [] on any failure.
  */
-function extractImports(content, ext) {
+function extractImports(content, ext, opts = {}) {
   if (!treeSitterAvailable) return [];
   const lext = ext.toLowerCase();
   const compiled = _getCompiledGrammar(lext);
   if (!compiled) return [];
 
+  const { oldTree, oldText, cacheKey } = _normalizeOptions(opts);
+
   try {
-    const tree = compiled.parser.parse(content);
+    const tree = _parseWithTree(compiled.parser, content, oldTree, oldText);
+    if (cacheKey && tree) setTreeInCache(cacheKey, tree, content);
     const matches = compiled.importQuery.matches(tree.rootNode);
     const paths = new Set();
 
@@ -277,20 +384,23 @@ function extractImports(content, ext) {
 }
 
 /**
- * extractSymbols(content, ext) → Array<{ name: string, kind: string }>
+ * extractSymbols(content, ext, opts) → Array<{ name: string, kind: string }>
  *
  * Returns top-level exported symbols. kind is one of:
  * 'function' | 'class' | 'variable' | 'interface' | 'type' | 'enum' |
  * 'struct' | 'trait' | 'method'
  */
-function extractSymbols(content, ext) {
+function extractSymbols(content, ext, opts = {}) {
   if (!treeSitterAvailable) return [];
   const lext = ext.toLowerCase();
   const compiled = _getCompiledGrammar(lext);
   if (!compiled) return [];
 
+  const { oldTree, oldText, cacheKey } = _normalizeOptions(opts);
+
   try {
-    const tree = compiled.parser.parse(content);
+    const tree = _parseWithTree(compiled.parser, content, oldTree, oldText);
+    if (cacheKey && tree) setTreeInCache(cacheKey, tree, content);
     const matches = compiled.symbolQuery.matches(tree.rootNode);
     const seen = new Set();
     const symbols = [];
@@ -313,18 +423,22 @@ function extractSymbols(content, ext) {
 }
 
 /**
- * extractAll(content, ext) → { imports: string[], symbols: Array<{name, kind}> }
+ * extractAll(content, ext, opts) → { imports: string[], symbols: Array<{name, kind}>, tree: object }
  *
- * Convenience wrapper — runs both queries in one parse.
+ * Convenience wrapper — runs both queries in one parse. Supports incremental
+ * parsing via `opts.oldTree` or `opts.cacheKey` (LRU cached).
  */
-function extractAll(content, ext) {
-  if (!treeSitterAvailable) return { imports: [], symbols: [] };
+function extractAll(content, ext, opts = {}) {
+  if (!treeSitterAvailable) return { imports: [], symbols: [], tree: null };
   const lext = ext.toLowerCase();
   const compiled = _getCompiledGrammar(lext);
-  if (!compiled) return { imports: [], symbols: [] };
+  if (!compiled) return { imports: [], symbols: [], tree: null };
+
+  const { oldTree, oldText, cacheKey } = _normalizeOptions(opts);
 
   try {
-    const tree = compiled.parser.parse(content);
+    const tree = _parseWithTree(compiled.parser, content, oldTree, oldText);
+    if (cacheKey && tree) setTreeInCache(cacheKey, tree, content);
 
     // Imports
     const importMatches = compiled.importQuery.matches(tree.rootNode);
@@ -353,12 +467,11 @@ function extractAll(content, ext) {
       }
     }
 
-    return { imports: [...importPaths], symbols };
+    return { imports: [...importPaths], symbols, tree };
   } catch (err) {
-    return { imports: [], symbols: [] };
+    return { imports: [], symbols: [], tree: null };
   }
 }
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function _inferKind(nameNode, langName) {
@@ -453,6 +566,10 @@ module.exports = {
   extractImports,
   extractSymbols,
   extractAll,
+  getTreeFromCache,
+  setTreeInCache,
+  clearTreeCache,
+  TREE_CACHE_MAX_ENTRIES,
   getUnavailableLanguages,
   getGrammarVersions,
   GRAMMAR_DEFS,
