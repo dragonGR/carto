@@ -1844,6 +1844,31 @@ async function runAsyncSuite() {
       assert.ok(!isIgnored(f), `expected ${f} to NOT be ignored (false positive)`);
     }
   });
+  test('Secret leakage', '.cartoignore directory patterns and globs ignore child paths', () => {
+    const { parseCartoIgnore } = require('../src/security/ignore');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-ignore-custom-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, '.cartoignore'), [
+        '# custom ignore rules',
+        'vendor/',
+        '/top_level_only/',
+        'legacy/**',
+        '*.generated.ts',
+      ].join('\n'));
+
+      const isIgnored = parseCartoIgnore(tmpDir);
+      assert.ok(isIgnored('vendor/lib/plugin.js'), 'vendor/ must match vendor/lib/plugin.js');
+      assert.ok(isIgnored('src/vendor/lib.js'), 'vendor/ must match src/vendor/lib.js');
+      assert.ok(isIgnored('top_level_only/foo.ts'), '/top_level_only/ must match top_level_only/foo.ts');
+      assert.ok(!isIgnored('src/top_level_only/foo.ts'), '/top_level_only/ must NOT match nested dir');
+      assert.ok(isIgnored('legacy/old/arch.py'), 'legacy/** must match legacy/old/arch.py');
+      assert.ok(isIgnored('client.generated.ts'), '*.generated.ts must match');
+      assert.ok(!isIgnored('client.ts'), 'client.ts must not be ignored');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
 
   await asyncTest('Secret leakage', 'MCP server opens DB in read-only mode (rejects writes, reads succeed)', async () => {
     const { SQLiteStore: Store } = require('../src/store/sqlite-store');

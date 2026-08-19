@@ -78,10 +78,35 @@ const DEFAULT_IGNORE_PATTERNS = [
  * Returns a function that checks if a file path matches any ignore pattern.
  */
 function patternToRegex(pattern) {
-  const regexStr = pattern
+  let p = pattern.trim().replace(/\\/g, '/');
+  const isDir = p.endsWith('/');
+  if (isDir) {
+    p = p.slice(0, -1);
+  }
+
+  const leadingSlash = p.startsWith('/');
+  if (leadingSlash) {
+    p = p.slice(1);
+  }
+
+  const regexStr = p
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
-  return new RegExp(`^${regexStr}$`, 'i');
+    .replace(/\*\*/g, '§§GLOBSTAR§§')
+    .replace(/\*/g, '.*')
+    .replace(/§§GLOBSTAR§§/g, '.*');
+
+  if (isDir) {
+    // Directory pattern: match either the directory itself or any file under it
+    return leadingSlash
+      ? new RegExp(`^${regexStr}(/.*)?$`, 'i')
+      : new RegExp(`(^|/)${regexStr}(/.*)?$`, 'i');
+  }
+
+  if (leadingSlash) {
+    return new RegExp(`^${regexStr}$`, 'i');
+  }
+
+  return new RegExp(`(^|/)${regexStr}$`, 'i');
 }
 
 function parseCartoIgnore(projectRoot) {
@@ -101,10 +126,14 @@ function parseCartoIgnore(projectRoot) {
   const compiled = [...DEFAULT_IGNORE_PATTERNS, ...userPatterns].map(patternToRegex);
 
   return function isIgnored(filePath) {
-    const basename = path.basename(filePath);
+    if (typeof filePath !== 'string' || filePath.length === 0) return false;
+    let norm = filePath.replace(/\\/g, '/');
+    while (norm.startsWith('./')) norm = norm.slice(2);
+    const basename = path.basename(norm);
+
     for (let i = 0; i < compiled.length; i++) {
       const rx = compiled[i];
-      if (rx.test(basename) || rx.test(filePath)) {
+      if (rx.test(norm) || rx.test(basename)) {
         return true;
       }
     }
