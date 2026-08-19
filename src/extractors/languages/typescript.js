@@ -36,16 +36,12 @@ module.exports = {
       // file-based routing (Remix / SvelteKit / Astro) — Babel isn't needed
       // for those, the path-shape comes from the filename.
       const fwRoutes = extractJsFrameworkRoutes(content, filename);
-      // Zod schemas and Drizzle tables are content/regex-based (no Babel/AST
-      // needed), and most of them live in NON-API files (validation schema
-      // modules, `*.schema.ts`, model definitions). Running them only on the
-      // API-handler path (the old behavior) made `get_models` return ~0 on
-      // real repos (supabase: 338 `z.object(` invisible). Run them here too.
       const zodModels = extractZodSchemas(content);
       const drizzleModels = extractDrizzleTables(content);
+      const tsInterfaces = extractTSInterfacesFromContent(content);
       return {
         routes:      fwRoutes,
-        models:      [...zodModels, ...drizzleModels],
+        models:      [...tsInterfaces, ...zodModels, ...drizzleModels],
         functions,
         envVars:     _extractEnvVarsRegex(content),
         dbTables:    drizzleModels.map(m => ({ tableName: m.name, modelName: m.name })),
@@ -92,12 +88,16 @@ module.exports = {
       if (!seen.has(key)) { routes.push(r); seen.add(key); }
     }
 
+    const drizzleModels = extractDrizzleTables(content);
+    const zodModels = extractZodSchemas(content);
+    const tsInterfaces = extractTSInterfaces(ast);
+
     return {
       routes,
-      models:      [...extractTSInterfaces(ast), ...extractZodSchemas(content), ...extractDrizzleTables(content)],
+      models:      [...tsInterfaces, ...zodModels, ...drizzleModels],
       functions:   extractTSFunctions(ast),
       envVars:     jsPlugin._extractProcessEnv(ast),
-      dbTables:    extractDrizzleTables(content).map(m => ({ tableName: m.name, modelName: m.name })),
+      dbTables:    drizzleModels.map(m => ({ tableName: m.name, modelName: m.name })),
       fetches:     jsPlugin._extractJSFetches(ast),
       storageKeys: [],
       events:      extractEventListeners(content),
@@ -402,6 +402,53 @@ function extractTSInterfaces(ast) {
         models.push({ className, fields, kind: 'type' });
       }
     }
+  }
+
+  return models;
+}
+
+/**
+ * Fast regex/line extractor for TS interfaces and type literals in non-API files.
+ */
+function extractTSInterfacesFromContent(content) {
+  const models = [];
+  if (typeof content !== 'string' || content.length === 0) return models;
+
+  // 1. Interfaces: (export )?interface Name (<...>)? (extends ...)? { ... }
+  const ifacePattern = /(?:export\s+)?interface\s+([A-Za-z0-9_$]+)(?:<[^>]+>)?(?:\s+extends\s+[^{]+)?\s*\{([\s\S]*?)\n\s*\}/g;
+  let m;
+  while ((m = ifacePattern.exec(content)) !== null) {
+    const className = m[1];
+    const body = m[2];
+    const fields = [];
+    const fieldLines = body.split('\n');
+    for (const line of fieldLines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) continue;
+      const propMatch = trimmed.match(/^([A-Za-z0-9_$]+)\s*\??\s*:\s*([^;,\n]+)/);
+      if (propMatch) {
+        fields.push({ name: propMatch[1], type: propMatch[2].trim() });
+      }
+    }
+    models.push({ className, fields, kind: 'interface' });
+  }
+
+  // 2. Type object literals: (export )?type Name = { ... }
+  const typePattern = /(?:export\s+)?type\s+([A-Za-z0-9_$]+)(?:<[^>]+>)?\s*=\s*\{([\s\S]*?)\n\s*\}/g;
+  while ((m = typePattern.exec(content)) !== null) {
+    const className = m[1];
+    const body = m[2];
+    const fields = [];
+    const fieldLines = body.split('\n');
+    for (const line of fieldLines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) continue;
+      const propMatch = trimmed.match(/^([A-Za-z0-9_$]+)\s*\??\s*:\s*([^;,\n]+)/);
+      if (propMatch) {
+        fields.push({ name: propMatch[1], type: propMatch[2].trim() });
+      }
+    }
+    models.push({ className, fields, kind: 'type' });
   }
 
   return models;

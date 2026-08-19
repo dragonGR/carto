@@ -4330,6 +4330,32 @@ test('CF-2b models', 'JS: Zod schema in a non-API .js module is extracted', () =
   assert.strictEqual(zod[0].className, 'OrderSchema');
 });
 
+test('CF-2b models', 'TS: interfaces and type aliases in non-API files are extracted as models', () => {
+  const filename = 'src/types/user.ts';
+  assert.strictEqual(jsPluginFx._isApiHandlerFile(filename, [], ''), false);
+  const code = [
+    'export interface UserProfile {',
+    '  id: string;',
+    '  name: string;',
+    '  email?: string;',
+    '}',
+    'export type AuthSession = {',
+    '  token: string;',
+    '  expiresAt: number;',
+    '};'
+  ].join('\n');
+  const out = tsPluginFx.extract(code, filename);
+  const iface = out.models.find(m => m.className === 'UserProfile');
+  const typeAlias = out.models.find(m => m.className === 'AuthSession');
+  assert.ok(iface, `expected UserProfile interface, got ${JSON.stringify(out.models)}`);
+  assert.strictEqual(iface.kind, 'interface');
+  assert.strictEqual(iface.fields.length, 3);
+  assert.ok(typeAlias, `expected AuthSession type alias, got ${JSON.stringify(out.models)}`);
+  assert.strictEqual(typeAlias.kind, 'type');
+  assert.strictEqual(typeAlias.fields.length, 2);
+});
+
+
 
 test('Framework extractors', 'gin: 3 routes via route group (api.GET/POST/PUT)', () => {
   const out = goPluginFx.extract(readFixture('gin.fixture.go'), 'gin.fixture.go');
