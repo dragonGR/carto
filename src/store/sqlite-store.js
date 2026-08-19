@@ -430,8 +430,12 @@ class SQLiteStore {
     const existing = this._db.prepare('SELECT path FROM files').all();
     const currentSet = new Set(currentPaths);
     const toRemove = existing.filter(f => !currentSet.has(f.path));
+    if (toRemove.length === 0) return 0;
     const del = this._db.prepare('DELETE FROM files WHERE path = ?');
-    for (const f of toRemove) del.run(f.path);
+    const tx = this._db.transaction(() => {
+      for (const f of toRemove) del.run(f.path);
+    });
+    tx();
     return toRemove.length;
   }
 
@@ -647,13 +651,18 @@ class SQLiteStore {
     const edges = [];
     let frontier = new Set([file.id]);
 
+    const outgoingStmt = this._db.prepare(
+      'SELECT to_file_id FROM imports WHERE from_file_id = ? AND to_file_id IS NOT NULL'
+    );
+    const incomingStmt = this._db.prepare(
+      'SELECT from_file_id FROM imports WHERE to_file_id = ?'
+    );
+
     for (let h = 0; h < hops; h++) {
       const next = new Set();
       for (const fid of frontier) {
         // Outgoing imports
-        const outgoing = this._db.prepare(
-          'SELECT to_file_id FROM imports WHERE from_file_id = ? AND to_file_id IS NOT NULL'
-        ).all(fid);
+        const outgoing = outgoingStmt.all(fid);
         for (const row of outgoing) {
           edges.push({ source: fid, target: row.to_file_id });
           if (!visited.has(row.to_file_id)) {
@@ -662,9 +671,7 @@ class SQLiteStore {
           }
         }
         // Incoming imports
-        const incoming = this._db.prepare(
-          'SELECT from_file_id FROM imports WHERE to_file_id = ?'
-        ).all(fid);
+        const incoming = incomingStmt.all(fid);
         for (const row of incoming) {
           edges.push({ source: row.from_file_id, target: fid });
           if (!visited.has(row.from_file_id)) {
@@ -913,16 +920,19 @@ class SQLiteStore {
     // Transitive propagation: BFS forward from directlyAffected files
     const visited = new Set(directlyAffected);
     const queue = [...directlyAffected];
+    const fileStmt = this._db.prepare('SELECT id FROM files WHERE path = ?');
+    const downstreamStmt = this._db.prepare(`
+      SELECT DISTINCT f.path
+      FROM imports i
+      JOIN files f ON i.from_file_id = f.id
+      WHERE i.to_file_id = ?
+    `);
+
     while (queue.length > 0) {
       const curPath = queue.shift();
-      const curFile = this._db.prepare('SELECT id FROM files WHERE path = ?').get(curPath);
+      const curFile = fileStmt.get(curPath);
       if (!curFile) continue;
-      const downstream = this._db.prepare(`
-        SELECT DISTINCT f.path
-        FROM imports i
-        JOIN files f ON i.from_file_id = f.id
-        WHERE i.to_file_id = ?
-      `).all(curFile.id);
+      const downstream = downstreamStmt.all(curFile.id);
       for (const d of downstream) {
         if (!visited.has(d.path) && d.path !== filePath) {
           visited.add(d.path);
