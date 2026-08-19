@@ -393,6 +393,13 @@ class SQLiteStore {
     const row = this._db.prepare('SELECT COUNT(*) as cnt FROM files').get();
     return row.cnt;
   }
+  getFileMetadataMap() {
+    const rows = this._db.prepare('SELECT id, path, mtime, size, hash FROM files').all();
+    const map = new Map();
+    for (const r of rows) map.set(r.path, r);
+    return map;
+  }
+
 
   upsertFile(relPath, { language, hash, mtime, size }) {
     const norm = normalizePath(relPath);

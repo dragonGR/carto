@@ -17,6 +17,10 @@ function detectChangedFiles(store, filePaths, projectRoot) {
   const changed = [];
   const newFiles = [];
 
+  const existingMap = typeof store.getFileMetadataMap === 'function'
+    ? store.getFileMetadataMap()
+    : new Map((store.getAllFiles ? store.getAllFiles() : []).map(f => [f.path, f]));
+
   for (const relPath of filePaths) {
     const fullPath = require('path').resolve(projectRoot, relPath);
     let stat;
@@ -30,7 +34,7 @@ function detectChangedFiles(store, filePaths, projectRoot) {
     const mtime = Math.floor(stat.mtimeMs);
     const size = stat.size;
 
-    const existing = store.getFileByPath(relPath);
+    const existing = existingMap.get(relPath);
 
     if (!existing) {
       // New file — must read and hash
