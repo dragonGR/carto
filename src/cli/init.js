@@ -4,6 +4,7 @@ const { detectFramework } = require('../detector/framework');
 const { parseCartoIgnore } = require('../security/ignore');
 const { runSync, discoverFiles: discoverFilesV2 } = require('../store/sync');
 const { checkForUpdate } = require('./update-check');
+const { getGitHooksDir, resolveGitDir } = require('../anci/git-meta');
 
 const REQUIRED_NODE_MAJOR = 18;
 const LARGE_REPO_THRESHOLD = 100_000;
@@ -59,7 +60,7 @@ function preflightChecks(projectRoot) {
 
   // No .git? Hooks won't fire — git-based freshness mechanism is gone.
   // Lazy MCP re-parse still handles staleness, but operators should know.
-  if (!fs.existsSync(path.join(projectRoot, '.git'))) {
+  if (!resolveGitDir(projectRoot)) {
     console.log('[CARTO] No .git directory — skipping git-hooks install. The index will refresh on `carto sync` and on MCP queries.');
   }
 
@@ -302,10 +303,9 @@ async function run(projectRoot, opts = {}) {
  * append non-destructively.
  */
 function installGitHooks(projectRoot) {
-  const gitDir = path.join(projectRoot, '.git');
-  if (!fs.existsSync(gitDir)) return;
+  const hooksDir = getGitHooksDir(projectRoot);
+  if (!hooksDir) return;
 
-  const hooksDir = path.join(gitDir, 'hooks');
   if (!fs.existsSync(hooksDir)) fs.mkdirSync(hooksDir, { recursive: true });
 
   // Hook bodies. `>/dev/null 2>&1 || true` keeps git fast and never blocks

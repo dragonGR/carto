@@ -16,6 +16,8 @@
  * `src/temporal/backfill.js`.
  */
 
+const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 
 /**
@@ -157,6 +159,57 @@ function sourceIdentity(root) {
   };
 }
 
+/**
+ * resolveGitDir(root) → { gitDir, commonDir, isWorktree } | null
+ *
+ * Resolves the underlying git directory and common directory, correctly
+ * handling standard repositories, linked worktrees (.git file), and submodules.
+ */
+function resolveGitDir(root) {
+  const dotGit = path.join(root, '.git');
+  if (!fs.existsSync(dotGit)) return null;
+
+  try {
+    const stat = fs.statSync(dotGit);
+    if (stat.isDirectory()) {
+      return { gitDir: dotGit, commonDir: dotGit, isWorktree: false };
+    }
+    if (stat.isFile()) {
+      const text = fs.readFileSync(dotGit, 'utf8').trim();
+      const match = text.match(/^gitdir:\s*(.+)$/m);
+      if (!match) return null;
+      const gitDir = path.resolve(root, match[1].trim());
+      const commonFile = path.join(gitDir, 'commondir');
+      let commonDir = gitDir;
+      if (fs.existsSync(commonFile)) {
+        const commonRel = fs.readFileSync(commonFile, 'utf8').trim();
+        commonDir = path.resolve(gitDir, commonRel);
+      }
+      return { gitDir, commonDir, isWorktree: true };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * getGitHooksDir(root) → absolute path to hooks directory, or null.
+ *
+ * Uses `git rev-parse --git-path hooks` when git is available to respect
+ * worktrees and `core.hooksPath` configuration. Falls back to filesystem
+ * inspection of .git (handling both directory and worktree file formats).
+ */
+function getGitHooksDir(root) {
+  const viaGit = git(root, ['rev-parse', '--git-path', 'hooks']);
+  if (viaGit) {
+    return path.resolve(root, viaGit);
+  }
+  const resolved = resolveGitDir(root);
+  if (!resolved) return null;
+  return path.join(resolved.commonDir, 'hooks');
+}
+
 module.exports = {
   git,
   isGitRepo,
@@ -168,4 +221,6 @@ module.exports = {
   uncommittedPaths,
   uncommittedCount,
   sourceIdentity,
+  resolveGitDir,
+  getGitHooksDir,
 };

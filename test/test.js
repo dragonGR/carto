@@ -1273,6 +1273,40 @@ async function runAsyncSuite() {
       fs.rmSync(homeSandbox, { recursive: true, force: true });
     }
   });
+  await asyncTest('Git hooks', 'carto init in a git worktree (.git file) installs hooks in commonDir', async () => {
+    const mainRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-hooks-mainrepo-'));
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-hooks-worktree-'));
+    const homeSandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-hooks-wt-home-'));
+    const restoreHome = sandboxHome(homeSandbox);
+    try {
+      // Setup fake main repo .git directory
+      const mainGitDir = path.join(mainRepo, '.git');
+      const worktreesDir = path.join(mainGitDir, 'worktrees', 'wt1');
+      fs.mkdirSync(worktreesDir, { recursive: true });
+      fs.mkdirSync(path.join(mainGitDir, 'hooks'), { recursive: true });
+      fs.writeFileSync(path.join(worktreesDir, 'commondir'), '../..\n');
+
+      // Setup worktree with .git file pointing to worktreesDir
+      fs.writeFileSync(path.join(worktreeRoot, '.git'), `gitdir: ${worktreesDir}\n`);
+      fs.writeFileSync(path.join(worktreeRoot, 'package.json'), '{"name":"worktree-fixture"}');
+      fs.writeFileSync(path.join(worktreeRoot, 'README.md'), '# worktree\n');
+      fs.writeFileSync(path.join(worktreeRoot, 'index.js'), 'module.exports = 2;\n');
+
+      await initCli.run(worktreeRoot);
+
+      // Hooks must be installed in main repo's hooks directory, not inside .git file
+      const preCommit = path.join(mainGitDir, 'hooks', 'pre-commit');
+      assert.ok(fs.existsSync(preCommit), 'pre-commit hook must exist in commonDir hooks');
+      const content = fs.readFileSync(preCommit, 'utf8');
+      assert.ok(content.includes('carto sync'), 'hook must contain carto sync');
+    } finally {
+      restoreHome();
+      fs.rmSync(mainRepo, { recursive: true, force: true });
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+      fs.rmSync(homeSandbox, { recursive: true, force: true });
+    }
+  });
+
 
   // ── Lazy MCP re-parse (freshness redesign) ────────────────────────
   //

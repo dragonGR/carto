@@ -27,7 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-
+const { getGitHooksDir, resolveGitDir } = require('../anci/git-meta');
 const REQUIRED_NODE_MAJOR = 18;
 const NATIVE_DEPS = [
   ['better-sqlite3', 'better-sqlite3'],
@@ -176,11 +176,12 @@ function diagnose(projectRoot) {
   } catch { /* staleness is best-effort — never break doctor */ }
 
   // ─── Git hooks ──────────────────────────────────────────────────
-  const gitDir = path.join(projectRoot, '.git');
-  if (fs.existsSync(gitDir)) {
+  const gitDirInfo = resolveGitDir(projectRoot);
+  const hooksDir = getGitHooksDir(projectRoot);
+  if (gitDirInfo && hooksDir && fs.existsSync(hooksDir)) {
     const hookNames = ['pre-commit', 'post-checkout', 'post-merge', 'post-rewrite'];
     const installed = hookNames.filter((h) => {
-      const p = path.join(gitDir, 'hooks', h);
+      const p = path.join(hooksDir, h);
       try {
         const text = fs.readFileSync(p, 'utf8');
         return text.includes('carto sync') || text.includes('carto-md');
@@ -211,7 +212,7 @@ function diagnose(projectRoot) {
   // is empty (0 commits) but this IS a git repo, the history-based tools
   // (drift, hotspots, velocity, predictive_risk, scaffold_for_intent) will
   // silently return nothing — warn with the manual fix.
-  if (fs.existsSync(gitDir)) {
+  if (gitDirInfo) {
     let temporalCommits = null; // null = couldn't read
     try {
       const { TemporalStore } = require('../temporal/store');
