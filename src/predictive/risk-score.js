@@ -85,21 +85,30 @@ function scoreFiles({ store, temporalStore = null, projectRoot, files = null }) 
     withoutTests = new Set(r.files || []);
   } catch {}
 
+  // Churn map pre-fetch (eliminates N+1 queries).
+  const churnMap = new Map();
+  if (temporalStore && temporalStore.db) {
+    try {
+      const churnRows = typeof temporalStore.getAllChurn === 'function'
+        ? temporalStore.getAllChurn()
+        : temporalStore.db.prepare('SELECT file_path, commit_count FROM file_churn').all();
+      for (const cr of churnRows) {
+        const fp = cr.file_path || cr.path;
+        if (fp) churnMap.set(fp, cr.commit_count || 0);
+      }
+    } catch {}
+  }
+
   // Score each file.
-  const rows = files
-    ? store.db.prepare(
-        `SELECT path, centrality FROM files WHERE path IN (${files.map(() => '?').join(',')})`
-      ).all(...files)
-    : store.db.prepare('SELECT path, centrality FROM files').all();
+  const targetSet = Array.isArray(files) && files.length > 0 ? new Set(files) : null;
+  const allRows = store.db.prepare('SELECT path, centrality FROM files').all();
+  const rows = targetSet ? allRows.filter(r => targetSet.has(r.path)) : allRows;
 
   const out = [];
   for (const r of rows) {
     const blast = clampUnit((r.centrality || 0) / Math.max(1, maxBlast));
-    let churn = 0;
-    if (temporalStore && temporalStore.db) {
-      const ch = temporalStore.getFileChurn(r.path);
-      if (ch) churn = clampUnit((ch.commit_count || 0) / Math.max(1, maxChurn));
-    }
+    const commitCount = churnMap.get(r.path) || 0;
+    const churn = clampUnit(commitCount / Math.max(1, maxChurn));
     const cross = crossSet.has(r.path) ? 1 : 0;
     const iv = clampUnit((ivCounts.get(r.path) || 0) / Math.max(1, maxIv));
     const noTest = withoutTests.has(r.path) ? 1 : 0;
