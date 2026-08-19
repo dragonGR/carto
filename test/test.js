@@ -9651,6 +9651,65 @@ test('AST Context Skeletonization', 'context-builder supports skeleton inclusion
   store.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+// ── Semantic Breaking Change Detection ───────────────────────────
+test('Semantic Breaking Changes', 'detectBreakingChanges flags deleted exported symbols with active callers', () => {
+  const { detectBreakingChanges } = require('../src/mcp/breaking-changes');
+  const { parseDiff } = require('../src/mcp/diff-parser');
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-break-'));
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (1, 'src/auth.ts', 'typescript')");
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (2, 'src/routes/login.ts', 'typescript')");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, exported) VALUES (1, 'verifyToken', 'function', 1)");
+  store.db.exec("INSERT INTO imports (from_file_id, to_file_id, to_path, symbol_name) VALUES (2, 1, 'src/auth.ts', 'verifyToken')");
+
+  const diffText = `--- a/src/auth.ts
++++ b/src/auth.ts
+@@ -1,5 +1,2 @@
+-export function verifyToken(token: string) {
+-  return true;
+-}
+`;
+  const parsed = parseDiff(diffText);
+  const breaking = detectBreakingChanges(parsed, store);
+  assert.strictEqual(breaking.length, 1);
+  assert.strictEqual(breaking[0].symbol, 'verifyToken');
+  assert.strictEqual(breaking[0].severity, 'HIGH');
+  assert.ok(breaking[0].callers.includes('src/routes/login.ts'));
+
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Semantic Breaking Changes', 'validateDiff incorporates breaking_change violations and suggestions', () => {
+  const { validateDiff } = require('../src/mcp/validate');
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-breakval-'));
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (1, 'src/api.ts', 'typescript')");
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (2, 'src/client.ts', 'typescript')");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, exported) VALUES (1, 'fetchUser', 'function', 1)");
+  store.db.exec("INSERT INTO imports (from_file_id, to_file_id, to_path, symbol_name) VALUES (2, 1, 'src/api.ts', 'fetchUser')");
+
+  const diffText = `--- a/src/api.ts
++++ b/src/api.ts
+@@ -1,4 +1,1 @@
+-export function fetchUser(id: string) {}
+`;
+  const valResult = validateDiff(store, null, diffText);
+  assert.strictEqual(valResult.risk, 'HIGH');
+  const breakingViol = valResult.violations.find(v => v.kind === 'breaking_change');
+  assert.ok(breakingViol, 'must include breaking_change violation');
+  assert.strictEqual(breakingViol.symbol, 'fetchUser');
+
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 // ═══════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════
@@ -9659,7 +9718,7 @@ test('AST Context Skeletonization', 'context-builder supports skeleton inclusion
   await runAsyncSuite();
 
   console.log('');
-  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping', 'Symbol-Level AST Impact', 'AST Context Skeletonization'];
+  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping', 'Symbol-Level AST Impact', 'AST Context Skeletonization', 'Semantic Breaking Changes'];
   for (const suite of suiteNames) {
     const s = suiteTotals[suite] || { pass: 0, total: 0 };
     const icon = s.pass === s.total ? '✓' : '✗';

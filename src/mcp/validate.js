@@ -40,6 +40,7 @@ const bitmapTools = require('../bitmap/tools');
 const { parseDiff, extractAddedImports } = require('./diff-parser');
 const { resolveSpecifier } = require('../extractors/imports');
 const { getTestsForChange } = require('./test-mapper');
+const { detectBreakingChanges } = require('./breaking-changes');
 const SENSITIVE_DOMAINS = new Set(['AUTH', 'PAYMENTS', 'PAYMENT', 'BILLING', 'SECURITY']);
 
 const DEFAULTS = {
@@ -252,6 +253,17 @@ function validateDiff(store, sidecar, diffText, opts = {}) {
         }
       }
     }
+  }
+
+  // ─── breaking change detection ──────────────────────────────────
+  const breakingChanges = detectBreakingChanges(parsedFiles, store);
+  for (const bc of breakingChanges) {
+    result.violations.push(bc);
+    result.suggestions.push({
+      kind: 'preserve_export',
+      file: bc.file,
+      message: `Symbol "${bc.symbol}" was removed but has active callers. Consider keeping a deprecated alias or updating callers in ${bc.callers.slice(0, 3).join(', ')}.`,
+    });
   }
 
   // ─── risk roll-up ────────────────────────────────────────────────
