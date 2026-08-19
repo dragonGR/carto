@@ -494,9 +494,9 @@ test('JS relative imports resolve to files', () => {
   };
 });
 
-test('Non-existent imports not included', () => {
+test('Non-existent local imports not included', () => {
   const tmpDir = fs.mkdtempSync('/tmp/carto-test-');
-  fs.writeFileSync(path.join(tmpDir, 'index.js'), `import { foo } from './nonexistent';\nimport bar from 'external-package';`);
+  fs.writeFileSync(path.join(tmpDir, 'index.js'), `import { foo } from './nonexistent';\nimport { bar } from '../nonexistent/lib';`);
 
   const content = fs.readFileSync(path.join(tmpDir, 'index.js'), 'utf-8');
   const imports = extractImports(content, path.join(tmpDir, 'index.js'), tmpDir);
@@ -506,6 +506,22 @@ test('Non-existent imports not included', () => {
   return {
     pass: imports.length === 0,
     reason: `should be empty, got: ${imports}`
+  };
+});
+
+test('External package imports captured as bare specifiers', () => {
+  const tmpDir = fs.mkdtempSync('/tmp/carto-test-pkg-');
+  fs.writeFileSync(path.join(tmpDir, 'index.js'), `import bar from 'external-package';\nimport express from 'express';`);
+
+  const content = fs.readFileSync(path.join(tmpDir, 'index.js'), 'utf-8');
+  const imports = extractImports(content, path.join(tmpDir, 'index.js'), tmpDir);
+
+  fs.rmSync(tmpDir, { recursive: true });
+
+  const hasAll = imports.includes('external-package') && imports.includes('express');
+  return {
+    pass: hasAll,
+    reason: `expected bare specifiers; got: ${imports}`
   };
 });
 
