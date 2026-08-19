@@ -9623,6 +9623,37 @@ test('Symbol-Level AST Impact', 'getSymbolsForFile and searchSymbols return symb
   store.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+test('Symbol-Level AST Impact', 'sync preserves rich symbol kinds (class, interface) from tree-sitter', async () => {
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const { runSync } = require('../src/store/sync');
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-symsync-'));
+  try {
+    fs.writeFileSync(path.join(projectRoot, 'package.json'), '{"name":"sym-test"}');
+    fs.writeFileSync(path.join(projectRoot, 'service.ts'), [
+      'export interface Account { id: string; }',
+      'export class AccountService {',
+      '  getBalance() { return 100; }',
+      '}',
+      'export function formatAccount(a: Account) { return a.id; }'
+    ].join('\n'));
+
+    await runSync({ projectRoot, output: null, temporal: false });
+    const store = new SQLiteStore(projectRoot);
+    store.open({ readonly: true });
+    const syms = store.getSymbolsForFile('service.ts');
+    assert.ok(syms.length >= 2, `expected at least 2 symbols; got ${syms.length}`);
+    const iface = syms.find(s => s.name === 'Account');
+    const cls = syms.find(s => s.name === 'AccountService');
+    const fn = syms.find(s => s.name === 'formatAccount');
+    if (iface) assert.strictEqual(iface.kind, 'interface');
+    if (cls) assert.strictEqual(cls.kind, 'class');
+    if (fn) assert.strictEqual(fn.kind, 'function');
+    store.close();
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
 
 // ── AST Context Skeletonization ───────────────────────────────────
 test('AST Context Skeletonization', 'skeletonizeSource preserves signatures and types while eliding function bodies', () => {

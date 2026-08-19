@@ -69,6 +69,31 @@ function isTestFile(relPath) {
   }
   return false;
 }
+/**
+ * buildStoredSymbols(extracted, functions)
+ * Preserves rich symbol kinds (class, interface, type, enum, function, etc.)
+ * from tree-sitter extraction when available, falling back to functions list.
+ */
+function buildStoredSymbols(extracted, functions) {
+  const raw = (extracted && (extracted._tsSymbols || extracted.tsSymbols || extracted.symbols)) || null;
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map(s => ({
+      name: typeof s === 'string' ? s : s.name,
+      kind: (typeof s === 'object' && s.kind) || 'function',
+      line: (typeof s === 'object' && typeof s.line === 'number') ? s.line : null,
+      exported: typeof s === 'object' && s.exported !== undefined ? !!s.exported : true,
+      isDefault: typeof s === 'object' && s.isDefault !== undefined ? !!s.isDefault : false,
+    }));
+  }
+  return (functions || []).map(f => ({
+    name: typeof f === 'string' ? f : f.name || 'unknown',
+    kind: (typeof f === 'object' && f.kind) || 'function',
+    line: (typeof f === 'object' && typeof f.line === 'number') ? f.line : null,
+    exported: typeof f === 'object' && f.exported !== undefined ? !!f.exported : true,
+    isDefault: typeof f === 'object' && f.isDefault !== undefined ? !!f.isDefault : false,
+  }));
+}
+
 
 /**
  * discoverFiles(projectRoot)
@@ -253,7 +278,7 @@ async function runSync(config) {
       const batchTx = store.db.transaction(() => {
         for (const result of results) {
           if (!result) continue;
-          const { relPath, routes, models, functions, envVars, dbTables, imports, errors } = result;
+          const { relPath, routes, models, functions, envVars, dbTables, imports, tsSymbols, errors } = result;
 
           const stat = (() => {
             try { return fs.statSync(path.resolve(projectRoot, relPath)); } catch { return null; }
@@ -276,11 +301,7 @@ async function runSync(config) {
             return { path: impPath, resolvedFileId: resolved ? resolved.id : null };
           });
 
-          const symbols = (functions || []).map(name => ({
-            name: typeof name === 'string' ? name : name.name || 'unknown',
-            kind: 'function',
-            exported: true
-          }));
+          const symbols = buildStoredSymbols({ tsSymbols }, functions);
 
           store.storeExtraction(fileId, {
             imports: resolvedImports,
@@ -314,11 +335,7 @@ async function runSync(config) {
           return { path: impPath, resolvedFileId: resolved ? resolved.id : null };
         });
 
-        const symbols = (result.extracted.functions || []).map(name => ({
-          name: typeof name === 'string' ? name : name.name || 'unknown',
-          kind: 'function',
-          exported: true
-        }));
+        const symbols = buildStoredSymbols(result.extracted, result.extracted.functions);
 
         store.storeExtraction(fileId, {
           imports: resolvedImports,
@@ -944,11 +961,7 @@ function syncFiles(projectRoot, paths, opts = {}) {
         return { path: impPath, resolvedFileId: resolved ? resolved.id : null };
       });
 
-      const symbols = (result.extracted.functions || []).map(name => ({
-        name: typeof name === 'string' ? name : name.name || 'unknown',
-        kind: 'function',
-        exported: true
-      }));
+      const symbols = buildStoredSymbols(result.extracted, result.extracted.functions);
 
       store.storeExtraction(fileId, {
         imports: resolvedImports,
