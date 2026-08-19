@@ -9710,6 +9710,29 @@ export function calculateTax(amount: number, rate: number = 0.1): number {
   assert.ok(!skeleton.includes('const row = await db.query'), 'must elide method body');
 });
 
+test('AST Context Skeletonization', 'skeletonizeSource correctly handles braces in strings, comments, and regexes', () => {
+  const { skeletonizeSource } = require('../src/ai/skeletonizer');
+  const tsSource = [
+    'export class Formatter {',
+    '  formatMessage(key: string): string {',
+    '    const template = "Hello {name}!";',
+    '    const pattern = /\\{\\w+\\}/;',
+    '    // { comment with braces }',
+    '    /* multiline { brace } */',
+    '    return template.replace(pattern, key);',
+    '  }',
+    '  nextMethod(): void {',
+    '    console.log("ready");',
+    '  }',
+    '}'
+  ].join('\n');
+  const skeleton = skeletonizeSource(tsSource, '.ts');
+  assert.ok(skeleton.includes('formatMessage(key: string): string'), 'must preserve first method signature');
+  assert.ok(skeleton.includes('nextMethod(): void'), 'must preserve second method signature');
+  assert.ok(!skeleton.includes('Hello {name}!'), 'must elide method body');
+});
+
+
 test('AST Context Skeletonization', 'skeletonizeSource handles Python signatures and class structures', () => {
   const { skeletonizeSource } = require('../src/ai/skeletonizer');
   const pySource = `

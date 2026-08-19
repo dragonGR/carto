@@ -17,12 +17,83 @@ const path = require('path');
 /**
  * Skeletonize TypeScript / JavaScript code.
  */
+/**
+ * Tokenizer-aware brace delta calculation for a line of code.
+ * Ignores braces inside single/double quotes, template strings, and comments.
+ */
+function scanLineBraces(line, state, onBrace = null) {
+  let delta = 0;
+  let i = 0;
+  const len = line.length;
+
+  while (i < len) {
+    const ch = line[i];
+
+    if (state.inBlockComment) {
+      if (ch === '*' && i + 1 < len && line[i + 1] === '/') {
+        state.inBlockComment = false;
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+
+    if (state.inString) {
+      if (ch === '\\') {
+        i += 2; // skip escaped char
+        continue;
+      }
+      if (ch === state.inString) {
+        state.inString = null;
+      }
+      i++;
+      continue;
+    }
+
+    // Not in string or comment
+    if (ch === '/' && i + 1 < len) {
+      if (line[i + 1] === '/') {
+        // Line comment — rest of line is ignored
+        break;
+      }
+      if (line[i + 1] === '*') {
+        state.inBlockComment = true;
+        i += 2;
+        continue;
+      }
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      state.inString = ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '{') {
+      delta++;
+      if (onBrace) onBrace(1, i);
+    } else if (ch === '}') {
+      delta--;
+      if (onBrace) onBrace(-1, i);
+    }
+
+    i++;
+  }
+
+  return delta;
+}
+
+/**
+ * Skeletonize TypeScript / JavaScript code.
+ */
 function skeletonizeJsTs(content) {
   const lines = content.split('\n');
   const result = [];
   let inFunctionBody = false;
   let braceDepth = 0;
   let bodyStartBraceDepth = 0;
+  const scanState = { inString: null, inBlockComment: false };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -30,10 +101,8 @@ function skeletonizeJsTs(content) {
 
     // Skip empty lines or pure internal comments when in body
     if (inFunctionBody) {
-      for (let ch of line) {
-        if (ch === '{') braceDepth++;
-        else if (ch === '}') braceDepth--;
-      }
+      const delta = scanLineBraces(line, scanState);
+      braceDepth += delta;
       if (braceDepth <= bodyStartBraceDepth) {
         inFunctionBody = false;
         result.push('    /* ... */\n  }');
@@ -59,10 +128,7 @@ function skeletonizeJsTs(content) {
     // Class declaration line
     if (/^(export\s+)?(abstract\s+)?class\s+/.test(trimmed)) {
       result.push(line);
-      for (let ch of line) {
-        if (ch === '{') braceDepth++;
-        else if (ch === '}') braceDepth--;
-      }
+      braceDepth += scanLineBraces(line, scanState);
       continue;
     }
 
@@ -72,11 +138,10 @@ function skeletonizeJsTs(content) {
       const signature = line.slice(0, braceIdx + 1);
       result.push(signature);
       bodyStartBraceDepth = braceDepth;
-      braceDepth++;
-      for (let j = braceIdx + 1; j < line.length; j++) {
-        if (line[j] === '{') braceDepth++;
-        else if (line[j] === '}') braceDepth--;
-      }
+
+      const lineDelta = scanLineBraces(line, scanState);
+      braceDepth += lineDelta;
+
       if (braceDepth > bodyStartBraceDepth) {
         inFunctionBody = true;
       } else {
@@ -88,10 +153,7 @@ function skeletonizeJsTs(content) {
     // Field declarations or simple lines inside class
     if (trimmed.endsWith(';') || trimmed.length === 0 || trimmed === '}') {
       result.push(line);
-      for (let ch of line) {
-        if (ch === '{') braceDepth++;
-        else if (ch === '}') braceDepth--;
-      }
+      braceDepth += scanLineBraces(line, scanState);
       continue;
     }
 
