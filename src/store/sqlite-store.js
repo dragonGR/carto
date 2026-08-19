@@ -862,6 +862,84 @@ class SQLiteStore {
     }
     return graph;
   }
+  // ─── Symbol-Level AST Impact & Queries ──────────────────────────────────
+
+  getSymbolsForFile(filePath) {
+    const row = this._db.prepare('SELECT id FROM files WHERE path = ?').get(filePath);
+    if (!row) return [];
+    return this._db.prepare(`
+      SELECT name, kind, line, exported, is_default_export as isDefault
+      FROM symbols
+      WHERE file_id = ?
+      ORDER BY line ASC, name ASC
+    `).all(row.id);
+  }
+
+  searchSymbols(query, limit = 20) {
+    return this._db.prepare(`
+      SELECT s.name, s.kind, s.line, s.exported, f.path as file
+      FROM symbols s
+      JOIN files f ON s.file_id = f.id
+      WHERE s.name LIKE ?
+      ORDER BY s.exported DESC, s.name ASC
+      LIMIT ?
+    `).all(`%${query}%`, limit);
+  }
+
+  getSymbolImpact(symbolName, filePath) {
+    const fileRow = this._db.prepare('SELECT id, path FROM files WHERE path = ?').get(filePath);
+    if (!fileRow) return null;
+    const symRow = this._db.prepare('SELECT id, name, kind, line, exported FROM symbols WHERE file_id = ? AND name = ?').get(fileRow.id, symbolName);
+    const kind = symRow ? symRow.kind : 'unknown';
+    const isTypeOnly = kind === 'type' || kind === 'interface';
+
+    // Find direct callers/importers of this symbol
+    const directRows = this._db.prepare(`
+      SELECT DISTINCT f.path
+      FROM imports i
+      JOIN files f ON i.from_file_id = f.id
+      WHERE i.to_file_id = ? AND (i.symbol_name = ? OR i.symbol_name IS NULL)
+    `).all(fileRow.id, symbolName);
+
+    const directlyAffected = directRows.map(r => r.path);
+
+    // Transitive propagation: BFS forward from directlyAffected files
+    const visited = new Set(directlyAffected);
+    const queue = [...directlyAffected];
+    while (queue.length > 0) {
+      const curPath = queue.shift();
+      const curFile = this._db.prepare('SELECT id FROM files WHERE path = ?').get(curPath);
+      if (!curFile) continue;
+      const downstream = this._db.prepare(`
+        SELECT DISTINCT f.path
+        FROM imports i
+        JOIN files f ON i.from_file_id = f.id
+        WHERE i.to_file_id = ?
+      `).all(curFile.id);
+      for (const d of downstream) {
+        if (!visited.has(d.path) && d.path !== filePath) {
+          visited.add(d.path);
+          queue.push(d.path);
+        }
+      }
+    }
+
+    const transitivelyAffected = [...visited];
+    const totalDependents = transitivelyAffected.length;
+    const risk = isTypeOnly
+      ? (totalDependents > 50 ? 'MEDIUM' : 'LOW')
+      : (totalDependents > 20 ? 'HIGH' : (totalDependents > 5 ? 'MEDIUM' : 'LOW'));
+
+    return {
+      symbol: symRow || { name: symbolName, kind: 'unknown', line: null, exported: 0 },
+      file: filePath,
+      isTypeOnly,
+      directlyAffected,
+      transitivelyAffected,
+      totalDependents,
+      risk
+    };
+  }
 
   // ─── Domain operations ─────────────────────────────────────────────────
 

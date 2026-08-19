@@ -9502,6 +9502,68 @@ test('Test-to-code mapping', 'change-plan integrates recommended_tests', () => {
   store.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+// ── Symbol-Level AST Impact ────────────────────────────────────────
+test('Symbol-Level AST Impact', 'getSymbolImpact distinguishes symbol-specific dependents vs whole-file blast', () => {
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-symimpact-'));
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+
+  // file 1: crypto.ts (declares User interface and hashPassword function)
+  // file 2: user-types.ts (imports User from crypto.ts)
+  // file 3: auth-service.ts (imports hashPassword from crypto.ts)
+  // file 4: app.ts (imports auth-service.ts)
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (1, 'src/crypto.ts', 'typescript')");
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (2, 'src/user-types.ts', 'typescript')");
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (3, 'src/auth-service.ts', 'typescript')");
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (4, 'src/app.ts', 'typescript')");
+
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, line, exported) VALUES (1, 'User', 'interface', 1, 1)");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, line, exported) VALUES (1, 'hashPassword', 'function', 10, 1)");
+
+  store.db.exec("INSERT INTO imports (from_file_id, to_file_id, to_path, symbol_name) VALUES (2, 1, 'src/crypto.ts', 'User')");
+  store.db.exec("INSERT INTO imports (from_file_id, to_file_id, to_path, symbol_name) VALUES (3, 1, 'src/crypto.ts', 'hashPassword')");
+  store.db.exec("INSERT INTO imports (from_file_id, to_file_id, to_path, symbol_name) VALUES (4, 3, 'src/auth-service.ts', 'login')");
+
+  const fnImpact = store.getSymbolImpact('hashPassword', 'src/crypto.ts');
+  assert.ok(fnImpact, 'must find symbol impact');
+  assert.strictEqual(fnImpact.symbol.name, 'hashPassword');
+  assert.strictEqual(fnImpact.symbol.kind, 'function');
+  assert.strictEqual(fnImpact.isTypeOnly, false);
+  assert.deepStrictEqual(fnImpact.directlyAffected, ['src/auth-service.ts']);
+  assert.ok(fnImpact.transitivelyAffected.includes('src/app.ts'));
+  assert.strictEqual(fnImpact.transitivelyAffected.includes('src/user-types.ts'), false, 'user-types only imports User interface');
+
+  const typeImpact = store.getSymbolImpact('User', 'src/crypto.ts');
+  assert.strictEqual(typeImpact.isTypeOnly, true);
+  assert.deepStrictEqual(typeImpact.directlyAffected, ['src/user-types.ts']);
+
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Symbol-Level AST Impact', 'getSymbolsForFile and searchSymbols return symbol index rows', () => {
+  const { SQLiteStore } = require('../src/store/sqlite-store');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carto-symsearch-'));
+  const store = new SQLiteStore(tmpDir);
+  store.open();
+
+  store.db.exec("INSERT INTO files (id, path, language) VALUES (1, 'src/api/payment.ts', 'typescript')");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, line, exported) VALUES (1, 'processPayment', 'function', 15, 1)");
+  store.db.exec("INSERT INTO symbols (file_id, name, kind, line, exported) VALUES (1, 'PaymentMethod', 'enum', 5, 1)");
+
+  const fileSymbols = store.getSymbolsForFile('src/api/payment.ts');
+  assert.strictEqual(fileSymbols.length, 2);
+  assert.ok(fileSymbols.some(s => s.name === 'processPayment' && s.kind === 'function'));
+
+  const searchHits = store.searchSymbols('Payment');
+  assert.strictEqual(searchHits.length, 2);
+  assert.strictEqual(searchHits[0].file, 'src/api/payment.ts');
+
+  store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 // ═══════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════
@@ -9510,7 +9572,7 @@ test('Test-to-code mapping', 'change-plan integrates recommended_tests', () => {
   await runAsyncSuite();
 
   console.log('');
-  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping'];
+  const suiteNames = ['Python extractor', 'Prisma extractor', 'Merger', 'Import graph', 'R extractor', 'File discovery', 'Project Structure', 'Path normalization', 'MCP resilience', 'Change plan', 'Init flow', 'Git hooks', 'Lazy MCP re-parse', 'Store adapter (ACP V2)', 'Secret leakage', 'Adaptive clustering', 'Domain config', 'Domain stability', 'Extraction errors', 'Framework extractors', 'CF-2b models', 'CF-1 temporal', 'Native install resilience', 'Bitmap validation', 'Bitset serialization', 'Bitmap engine', 'Inspect command', 'Validation API', 'Episodic Memory', 'PR impact', 'Scale-test driver', 'ANCI roundtrip', 'SSE streaming', 'Files without tests', 'MCP middleware', 'carto validate', 'SWE-bench', 'CLI: status', 'CLI: why', 'CLI: doctor', 'SWE-bench tools', 'Temporal storage', 'Temporal MCP tools', 'Brain invariants', 'Brain conventions', 'Brain procedural', 'Brain working', 'Brain suggestions', 'Plugin API', 'PHP extractor', 'Kotlin extractor', 'Swift extractor', 'Dart extractor', 'Long-tail frameworks', 'ACP persistence', 'ACP config', 'ACP safety', 'AI retrieval: lexical', 'AI retrieval: rrf', 'AI retrieval: semantic', 'AI context-builder', 'AI tools: interfaceContract', 'AI tools: dataFlow', 'AI tools: safetyChecklist', 'AI tools: dependencySurface', 'AI tools: upgradeRisk', 'AI tools: staleDocs', 'Adjacent: call graph', 'Adjacent: IaC', 'Adjacent: runtime', 'Adjacent: semantic-diff', 'Adjacent: llm-enrich', 'Predictive: risk-score', 'Predictive: cut-points', 'Predictive: validate-change', 'Predictive: ownership', 'Predictive: drift-digest', 'Org: store', 'Org: detect', 'Org: sync', 'Org: queries', 'Docs API gen', 'Rule engine: intent', 'Rule engine: engine', 'Rule engine: money-as-float', 'Rule engine: auth-missing', 'Rule engine: gaps store', 'CF-7 MCP surface', 'Incremental Tree-sitter', 'Test-to-code mapping', 'Symbol-Level AST Impact'];
   for (const suite of suiteNames) {
     const s = suiteTotals[suite] || { pass: 0, total: 0 };
     const icon = s.pass === s.total ? '✓' : '✗';
