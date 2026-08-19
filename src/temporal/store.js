@@ -73,11 +73,15 @@ class TemporalStore {
     try {
       this._db = new Database(this.dbPath);
     } catch (err) {
-      // Corrupt — recreate
-      try { fs.unlinkSync(this.dbPath); } catch {}
-      try { fs.unlinkSync(this.dbPath + '-wal'); } catch {}
-      try { fs.unlinkSync(this.dbPath + '-shm'); } catch {}
-      this._db = new Database(this.dbPath);
+      if (err && (err.name === 'SqliteError' || (err.code && String(err.code).startsWith('SQLITE_')))) {
+        // Corrupt — recreate
+        try { fs.unlinkSync(this.dbPath); } catch {}
+        try { fs.unlinkSync(this.dbPath + '-wal'); } catch {}
+        try { fs.unlinkSync(this.dbPath + '-shm'); } catch {}
+        this._db = new Database(this.dbPath);
+      } else {
+        throw err;
+      }
     }
 
     this._db.pragma('journal_mode = WAL');

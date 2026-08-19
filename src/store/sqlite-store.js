@@ -74,12 +74,16 @@ class SQLiteStore {
     try {
       this._db = new Database(dbPath);
     } catch (err) {
-      // Corrupted — delete and recreate
-      console.warn(`[CARTO] Database corrupted, recreating: ${err.message}`);
-      try { fs.unlinkSync(dbPath); } catch {}
-      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
-      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
-      this._db = new Database(dbPath);
+      if (err && (err.name === 'SqliteError' || (err.code && String(err.code).startsWith('SQLITE_')))) {
+        // Corrupted — delete and recreate
+        console.warn(`[CARTO] Database corrupted, recreating: ${err.message}`);
+        try { fs.unlinkSync(dbPath); } catch {}
+        try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+        try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+        this._db = new Database(dbPath);
+      } else {
+        throw err;
+      }
     }
 
     this._applyPragmas();

@@ -39,9 +39,13 @@ class AcpStore {
     fs.mkdirSync(cartoDir, { recursive: true });
     try {
       this._db = new Database(this.dbPath);
-    } catch {
-      try { fs.unlinkSync(this.dbPath); } catch {}
-      this._db = new Database(this.dbPath);
+    } catch (err) {
+      if (err && (err.name === 'SqliteError' || (err.code && String(err.code).startsWith('SQLITE_')))) {
+        try { fs.unlinkSync(this.dbPath); } catch {}
+        this._db = new Database(this.dbPath);
+      } else {
+        throw err;
+      }
     }
     this._db.pragma('journal_mode = WAL');
     this._db.pragma('synchronous = NORMAL');
